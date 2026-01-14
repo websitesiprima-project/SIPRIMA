@@ -110,7 +110,7 @@ export default function Dashboard() {
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
   const API_URL =
-    process.env.NEXT_PUBLIC_API_URL || "https://sijagad-monitoring.vercel.app/";
+    process.env.NEXT_PUBLIC_API_URL || "https://sijagad-monitoring.vercel.app";
 
   // --- FETCHING DATA ---
   const fetchLetters = useCallback(async () => {
