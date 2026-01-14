@@ -1,0 +1,28 @@
+# --- GLOBAL IGNORE ---
+.DS_Store
+.vscode/
+
+# --- FRONTEND ---
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.vercel/
+frontend/*.tsbuildinfo
+
+# --- BACKEND (PYTHON) ---
+Backend/__pycache__/
+Backend/venv/
+Backend/env/
+
+# --- 🚨 KUNCI RAHASIA (SANGAT PENTING) ---
+**/.env
+**/.env.local
+**/.env.*.local
+Backend/.env
+frontend/.env.local
+
+# --- DATA & DOCUMENTS (BARU) ---
+*.csv
+*.xlsx
+*.xls
