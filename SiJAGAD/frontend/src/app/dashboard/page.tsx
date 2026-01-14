@@ -109,7 +109,8 @@ export default function Dashboard() {
   // --- CHECKLIST STATE ---
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const API_URL =
+    process.env.NEXT_PUBLIC_API_URL || "https://sijagad-monitoring.vercel.app/";
 
   // --- FETCHING DATA ---
   const fetchLetters = useCallback(async () => {
