@@ -40,8 +40,8 @@ export default function PortalGateway() {
 
       {/* --- KARTU PILIHAN APLIKASI --- */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-4xl relative z-10">
-        {/* KARTU 1: REVALUE (Frontend Dashboard) */}
-        <a href="http://localhost:3001" className="group">
+        {/* KARTU 1: REVALUE (Updated Link) */}
+        <a href="https://revalue-five.vercel.app/" className="group">
           <motion.div
             whileHover={{ y: -5 }}
             className="h-full bg-white rounded-3xl p-8 border border-cyan-100 shadow-xl shadow-cyan-900/5 hover:shadow-cyan-500/20 transition-all relative overflow-hidden group-hover:border-cyan-300"
@@ -69,8 +69,8 @@ export default function PortalGateway() {
           </motion.div>
         </a>
 
-        {/* KARTU 2: SIJAGAD (Backend/Legacy) */}
-        <a href="http://localhost:3002" className="group">
+        {/* KARTU 2: SIJAGAD (Updated Link) */}
+        <a href="https://sijagad.vercel.app/" className="group">
           <motion.div
             whileHover={{ y: -5 }}
             className="h-full bg-white rounded-3xl p-8 border border-orange-100 shadow-xl shadow-orange-900/5 hover:shadow-orange-500/20 transition-all relative overflow-hidden group-hover:border-orange-300"
@@ -88,7 +88,7 @@ export default function PortalGateway() {
               </h2>
               <p className="text-slate-500 text-sm leading-relaxed mb-6">
                 Sistem Penanganan Surat Penjaminan Pelaksanaan & Surat
-                Penjaminan Pemeliharaan.
+                Penjaminan Pemeliharaan (Backend API).
               </p>
 
               <div className="flex items-center font-bold text-orange-500 group-hover:gap-3 gap-1 transition-all text-sm">
