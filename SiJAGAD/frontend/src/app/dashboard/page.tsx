@@ -25,12 +25,12 @@ import {
   BookOpen,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { toast } from "react-hot-toast";
+import { toast, Toaster } from "react-hot-toast";
 
-// --- 1. DEFINISI TIPE DATA ---
+// --- 1. DEFINISI TIPE DATA YANG KUAT (TYPE SAFETY) ---
 
 interface Letter {
-  id: number; // Wajib ada (kita akan filter data yang null)
+  id: number;
   vendor: string;
   pekerjaan: string;
   nomor_kontrak: string;
@@ -55,16 +55,27 @@ interface Log {
   created_at: string;
 }
 
+// Interface Khusus untuk Pie Chart (Wajib ada value & color)
+interface PieChartItem {
+  name: string;
+  value: number;
+  color: string;
+}
+
+// Interface Khusus untuk Bar Chart (Wajib ada total)
+interface BarChartItem {
+  name: string;
+  total: number;
+}
+
 interface AnalyticsData {
   summary: {
     total_surat: number;
     total_nominal: number;
     total_expired: number;
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  pie_chart: any[];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  bar_chart: any[];
+  pie_chart: PieChartItem[];
+  bar_chart: BarChartItem[];
 }
 
 export default function Dashboard() {
@@ -79,7 +90,7 @@ export default function Dashboard() {
 
   // User State
   const [userEmail, setUserEmail] = useState("");
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false); // eslint-disable-line @typescript-eslint/no-unused-vars
 
   // UI State
   const [isPageLoading, setIsPageLoading] = useState(true);
@@ -106,10 +117,8 @@ export default function Dashboard() {
       if (resLetters.ok) {
         const rawData = await resLetters.json();
         // 🔥 FITUR ANTI-SAMPAH: Hanya simpan data yang punya ID valid
-        // Ini mencegah Error 422 saat hapus/edit karena data ID null dibuang dari list
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const cleanData = rawData.filter(
-          (item: any) => item.id !== null && item.id !== undefined,
+          (item: Letter) => item.id !== null && item.id !== undefined,
         );
         setLetters(cleanData);
       }
@@ -133,13 +142,16 @@ export default function Dashboard() {
         const {
           data: { user },
         } = await supabase.auth.getUser();
+
+        // PENTING: Redirect jika tidak ada user
         if (!user) {
-          router.push("/auth");
+          router.replace("/auth");
           return;
         }
+
         setUserEmail(user.email || "Unknown");
 
-        // Cek Role
+        // Cek Role (Opsional, jika nanti dipakai)
         const { data } = await supabase
           .from("profiles")
           .select("role")
@@ -148,22 +160,24 @@ export default function Dashboard() {
         if (data?.role === "admin") setIsAdmin(true);
 
         await fetchData();
-      } finally {
+
+        // Matikan loading hanya jika user valid & data terambil
+        setIsPageLoading(false);
+      } catch (error) {
+        console.error("Init Error:", error);
         setIsPageLoading(false);
       }
     };
     init();
   }, [router, fetchData]);
 
-  // --- 4. LOGIKA FILTERING & TABS (FIXED) ---
+  // --- 4. LOGIKA FILTERING & TABS ---
 
-  // Filter Data agar Tab TERPISAH dan Pencarian berfungsi
   const filteredLetters = letters.filter((l) => {
-    // 1. Filter Tab (Wajib Sama)
-    // Menggunakan lowercase agar "Jaminan Pelaksanaan" cocok dengan "jaminan pelaksanaan"
+    // 1. Filter Tab (Case Insensitive)
     const categoryMatch = l.kategori?.toLowerCase() === activeTab.toLowerCase();
 
-    // 2. Filter Search (Opsional)
+    // 2. Filter Search
     const term = searchTerm.toLowerCase();
     const searchMatch =
       l.vendor.toLowerCase().includes(term) ||
@@ -174,7 +188,7 @@ export default function Dashboard() {
     return categoryMatch && searchMatch;
   });
 
-  // --- 5. LOGIKA CHECKBOX (FIXED) ---
+  // --- 5. LOGIKA CHECKBOX ---
 
   const toggleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
@@ -197,13 +211,13 @@ export default function Dashboard() {
   // --- 6. ACTIONS ---
 
   const handleDelete = async (id: number) => {
-    // Safety Check: Jangan kirim request jika ID null (Penyebab Error 422)
     if (!id) {
       toast.error("Data korup (ID Kosong), tidak bisa dihapus.");
       return;
     }
 
     if (!confirm("Yakin ingin menghapus data ini secara permanen?")) return;
+
     setProcessing(true);
     const toastId = toast.loading("Menghapus...");
 
@@ -212,8 +226,9 @@ export default function Dashboard() {
         `${API_URL}/letters/${id}?user_email=${userEmail}`,
         { method: "DELETE" },
       );
+
       if (res.ok) {
-        await fetchData(); // Refresh data agar UI update
+        await fetchData();
         toast.success("Data terhapus", { id: toastId });
         setSelectedIds((prev) => prev.filter((item) => item !== id));
       } else {
@@ -257,7 +272,7 @@ export default function Dashboard() {
     window.open(`${API_URL}/export/excel`, "_blank");
   };
 
-  // Format Rupiah
+  // Format Rupiah Helper
   const formatRupiah = (num: number) =>
     new Intl.NumberFormat("id-ID", {
       style: "currency",
@@ -271,7 +286,7 @@ export default function Dashboard() {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 gap-4">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        <p className="text-slate-500 font-medium animate-pulse">
+        <p className="text-slate-600 font-medium animate-pulse">
           Memuat Sistem...
         </p>
       </div>
@@ -279,6 +294,9 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-24">
+      {/* Toast Container */}
+      <Toaster position="top-center" reverseOrder={false} />
+
       {/* NAVBAR */}
       <nav className="bg-white/80 backdrop-blur-md sticky top-0 z-50 border-b border-slate-200 px-6 py-4 flex justify-between items-center shadow-sm">
         <div className="flex items-center gap-3">
@@ -312,7 +330,7 @@ export default function Dashboard() {
             onClick={async () => {
               await supabase.auth.signOut();
               document.cookie = "token=; path=/; max-age=0";
-              router.push("/");
+              router.replace("/");
             }}
             className="bg-red-50 text-red-500 p-2.5 rounded-xl hover:bg-red-100 transition-colors border border-red-100"
             title="Keluar"
@@ -327,21 +345,21 @@ export default function Dashboard() {
         {analyticsData ? (
           <AnalyticsCharts data={analyticsData} />
         ) : (
-          <div className="p-8 text-center text-slate-400 bg-white rounded-3xl border border-slate-200">
-            Sedang memuat grafik...
+          <div className="p-8 text-center text-slate-400 bg-white rounded-3xl border border-slate-200 shadow-sm animate-pulse">
+            Sedang memuat grafik analitik...
           </div>
         )}
 
         {/* --- CONTROLS SECTION --- */}
         <div className="flex flex-col lg:flex-row justify-between items-end gap-6">
-          {/* TAB SWITCHER (Pastikan ini berfungsi memisahkan data) */}
+          {/* TAB SWITCHER */}
           <div className="bg-white p-1.5 rounded-2xl flex gap-1 border border-slate-200 shadow-sm w-full lg:w-auto overflow-x-auto">
             {["Jaminan Pelaksanaan", "Jaminan Pemeliharaan"].map((tab) => (
               <button
                 key={tab}
                 onClick={() => {
                   setActiveTab(tab);
-                  setSelectedIds([]); // PENTING: Reset checkbox saat ganti tab agar tidak error seleksi
+                  setSelectedIds([]);
                 }}
                 className={`px-6 py-3 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${
                   activeTab === tab
@@ -364,7 +382,7 @@ export default function Dashboard() {
               <input
                 type="text"
                 placeholder="Cari Vendor, No. Kontrak..."
-                className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-sm transition-all"
+                className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-sm transition-all text-sm"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
@@ -400,7 +418,6 @@ export default function Dashboard() {
                       type="checkbox"
                       className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                       onChange={toggleSelectAll}
-                      // Checked jika semua filteredLetters terpilih (dan ada isinya)
                       checked={
                         filteredLetters.length > 0 &&
                         selectedIds.length === filteredLetters.length
@@ -418,7 +435,6 @@ export default function Dashboard() {
               <tbody className="divide-y divide-slate-100">
                 {filteredLetters.length > 0 ? (
                   filteredLetters.map((letter) => {
-                    // Logic Status Warna
                     const endDate = new Date(letter.tanggal_akhir_garansi);
                     const isValidDate = !isNaN(endDate.getTime());
                     const diff = isValidDate
@@ -450,7 +466,9 @@ export default function Dashboard() {
                     return (
                       <tr
                         key={letter.id}
-                        className={`group transition-colors ${isSelected ? "bg-blue-50/60" : "hover:bg-slate-50/80"}`}
+                        className={`group transition-colors ${
+                          isSelected ? "bg-blue-50/60" : "hover:bg-slate-50/80"
+                        }`}
                       >
                         {/* Checkbox */}
                         <td className="px-6 py-4 text-center">
@@ -519,11 +537,10 @@ export default function Dashboard() {
                         {/* Aksi */}
                         <td className="px-6 py-4">
                           <div className="flex justify-center gap-2 opacity-100">
-                            {/* 🔥 TOMBOL EDIT (FUNGSI KEMBALI) 🔥 */}
                             <Link
                               href={`/dashboard/input?id=${letter.id}`}
                               className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-600 hover:text-white rounded-xl transition-all border border-blue-100"
-                              title="Edit Data (Perbaiki Typo)"
+                              title="Edit Data"
                             >
                               <Edit size={16} />
                             </Link>
@@ -531,7 +548,7 @@ export default function Dashboard() {
                             <button
                               onClick={() => handleDelete(letter.id)}
                               className="p-2 text-red-500 bg-red-50 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100"
-                              title="Hapus Permanen"
+                              title="Hapus"
                               disabled={processing}
                             >
                               <Trash2 size={16} />
@@ -549,6 +566,7 @@ export default function Dashboard() {
                               <a
                                 href={letter.file_url}
                                 target="_blank"
+                                rel="noopener noreferrer"
                                 className="p-2 text-emerald-600 bg-emerald-50 hover:bg-emerald-600 hover:text-white rounded-xl transition-all border border-emerald-100"
                                 title="Download PDF"
                               >
@@ -570,10 +588,11 @@ export default function Dashboard() {
                         <p className="text-lg font-bold text-slate-400">
                           Tidak ada data ditemukan
                         </p>
+                        {/* FIX ESLINT QUOTE DISINI: */}
                         <p className="text-xs max-w-xs mx-auto mt-2">
                           Belum ada data untuk kategori{" "}
-                          <strong>"{activeTab}"</strong> atau kata kunci tidak
-                          cocok.
+                          <strong>&quot;{activeTab}&quot;</strong> atau kata
+                          kunci tidak cocok.
                         </p>
                       </div>
                     </td>
@@ -584,7 +603,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* --- BULK ACTION BAR (MUNCUL JIKA CHECKBOX DIPILIH) --- */}
+        {/* --- BULK ACTION BAR --- */}
         <AnimatePresence>
           {selectedIds.length > 0 && (
             <motion.div
@@ -628,7 +647,7 @@ export default function Dashboard() {
           )}
         </AnimatePresence>
 
-        {/* 🔥 TOMBOL TAMBAH (Floating Action Button) - PASTI MUNCUL 🔥 */}
+        {/* Floating Action Button */}
         <Link href="/dashboard/input">
           <button
             className="fixed bottom-8 right-8 bg-blue-600 text-white p-5 rounded-full shadow-[0_10px_40px_-10px_rgba(37,99,235,0.5)] hover:scale-110 hover:bg-blue-700 transition-all z-40 group flex items-center justify-center border-4 border-white/20 backdrop-blur-sm"
@@ -642,7 +661,7 @@ export default function Dashboard() {
         </Link>
       </main>
 
-      {/* --- MODALS (QR CODE & LOGS) --- */}
+      {/* --- MODAL QR CODE --- */}
       <AnimatePresence>
         {showQR && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 print:bg-white print:p-0">
@@ -652,7 +671,6 @@ export default function Dashboard() {
               exit={{ scale: 0.9, opacity: 0 }}
               className="bg-white rounded-[32px] p-8 max-w-sm w-full flex flex-col items-center shadow-2xl print:shadow-none print:w-[70mm] print:h-[100mm] print:p-0 print:m-0 border border-slate-200"
             >
-              {/* CSS Print Khusus */}
               <style
                 dangerouslySetInnerHTML={{
                   __html: ` @media print { body * { visibility: hidden; } .shopee-label, .shopee-label * { visibility: visible; } .shopee-label { position: fixed; left: 0; top: 0; width: 70mm !important; height: 100mm !important; padding: 10mm; display: flex; flex-direction: column; align-items: center; justify-content: center; background: white !important; } @page { size: 70mm 100mm; margin: 0; } .no-print { display: none !important; } } `,
@@ -711,6 +729,7 @@ export default function Dashboard() {
         )}
       </AnimatePresence>
 
+      {/* --- MODAL LOGS --- */}
       <AnimatePresence>
         {showLogs && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
@@ -741,7 +760,11 @@ export default function Dashboard() {
                     >
                       <div className="flex justify-between items-start mb-1">
                         <span
-                          className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${log.action === "DELETE" ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"}`}
+                          className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${
+                            log.action === "DELETE"
+                              ? "bg-red-100 text-red-600"
+                              : "bg-blue-100 text-blue-600"
+                          }`}
                         >
                           {log.action}
                         </span>
