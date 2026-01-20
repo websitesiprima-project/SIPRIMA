@@ -57,6 +57,7 @@ class LetterSchema(BaseModel):
     file_url: Optional[str] = None
     user_email: Optional[str] = "System"
     lokasi: Optional[str] = None
+    # id: Optional[int] = None  <-- Kita biarkan tidak ada di sini, atau abaikan di logic
 
 
 # --- 3. HELPER FUNCTIONS ---
@@ -100,7 +101,7 @@ async def add_process_time_header(request: Request, call_next):
     response.headers["X-Process-Time"] = str(process_time)
     return response
 
-# C. CORS (PENTING: Agar Frontend ReValue bisa akses Backend ini)
+# C. CORS (PENTING: Agar Frontend bisa akses Backend ini)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Mengizinkan semua akses (ubah ke domain spesifik saat production)
@@ -234,17 +235,43 @@ def get_all_letters():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# --- TAMBAHKAN INI DI main.py ---
+
+@app.get("/letters/{letter_id}")
+def get_letter_by_id(letter_id: int):
+    """Mengambil SATU data surat berdasarkan ID (Untuk Edit)."""
+    try:
+        # Query ke Supabase
+        response = supabase.table("letters").select("*").eq("id", letter_id).single().execute()
+        
+        # Jika data tidak ditemukan (biasanya Supabase akan throw error jika .single() kosong, 
+        # tapi kita handle manual juga biar aman)
+        if not response.data:
+             raise HTTPException(status_code=404, detail="Data tidak ditemukan")
+             
+        return response.data
+    except Exception as e:
+        # Handle jika ID tidak ada di DB
+        print(f"Error Get ID {letter_id}: {e}")
+        raise HTTPException(status_code=404, detail="Data tidak ditemukan")
+
+
 @app.post("/letters")
 def create_letter(letter: LetterSchema, background_tasks: BackgroundTasks):
     try:
         data = letter.dict()
         user_email = data.pop("user_email", "Admin")
-        data["is_deleted"] = False 
         
-        # Sanitasi
+        # --- HAPUS ID AGAR DATABASE YANG ISI OTOMATIS ---
+        if "id" in data:
+            del data["id"]
+        # -----------------------------------------------
+
+        data["is_deleted"] = False
         data["vendor"] = sanitize_text(data["vendor"])
         data["pekerjaan"] = sanitize_text(data["pekerjaan"])
         
+        # Insert
         response = supabase.table("letters").insert(data).execute()
         
         if response.data:
@@ -252,6 +279,7 @@ def create_letter(letter: LetterSchema, background_tasks: BackgroundTasks):
         
         return response.data
     except Exception as e:
+        print(f"❌ Error Create: {e}") 
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -261,6 +289,10 @@ def update_letter(letter_id: int, letter: LetterSchema, background_tasks: Backgr
         data = letter.dict()
         user_email = data.pop("user_email", "Admin")
         
+        # 🔥 FIX: JANGAN UPDATE ID
+        if "id" in data:
+            del data["id"]
+
         data["vendor"] = sanitize_text(data["vendor"])
         data["pekerjaan"] = sanitize_text(data["pekerjaan"])
         
@@ -324,7 +356,7 @@ def cron_auto_update_status(background_tasks: BackgroundTasks):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# --- 7. EXPORT EXCEL (PERBAIKAN TYPE CHECKING) ---
+# --- 7. EXPORT EXCEL ---
 @app.get("/export/excel")
 def export_excel_template():
     try:
@@ -345,17 +377,13 @@ def export_excel_template():
 
         row_idx = 5 
         for i, item in enumerate(data, start=1):
-            # 1. Cek apakah item benar-benar dictionary
             if not isinstance(item, dict): 
                 continue
             
-            # 2. TRIK KHUSUS: Definisikan ulang variabel dengan tipe data eksplisit
-            # Ini membuat Pylance sadar bahwa 'row_data' PASTI sebuah Dictionary
             row_data: Dict[str, Any] = item
 
-            # Helper function menggunakan 'row_data', BUKAN 'item'
             def get_val(key: str): 
-                val = row_data.get(key) # Sekarang .get() aman karena row_data adalah Dict
+                val = row_data.get(key)
                 return str(val) if val is not None else '-'
 
             ws[f'A{row_idx}'] = i
@@ -363,7 +391,6 @@ def export_excel_template():
             ws[f'C{row_idx}'] = get_val('nomor_kontrak')
             ws[f'D{row_idx}'] = get_val('pekerjaan')
             
-            # Konversi Nominal Aman
             raw_nominal = row_data.get('nominal_jaminan', 0)
             try:
                 final_nominal = int(float(str(raw_nominal)))

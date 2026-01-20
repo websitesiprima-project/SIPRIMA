@@ -1,4 +1,5 @@
 "use client";
+
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
@@ -26,9 +27,10 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "react-hot-toast";
 
-// --- Interfaces ---
+// --- 1. DEFINISI TIPE DATA ---
+
 interface Letter {
-  id?: number;
+  id: number; // Wajib ada (kita akan filter data yang null)
   vendor: string;
   pekerjaan: string;
   nomor_kontrak: string;
@@ -53,82 +55,75 @@ interface Log {
   created_at: string;
 }
 
-// ✅ PERBAIKAN: Definisi Tipe Data Strict untuk Grafik
-// Harus sesuai dengan yang diminta AnalyticsCharts.tsx (Wajib number, bukan optional)
-interface AnalyticsSummary {
-  total_surat: number;
-  total_nominal: number;
-  total_expired: number;
-}
-
-interface PieData {
-  name: string;
-  value: number; // ⚠️ WAJIB NUMBER (jangan pakai ?)
-  color: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  [key: string]: any;
-}
-
-interface BarData {
-  name: string;
-  total: number; // ⚠️ WAJIB NUMBER (jangan pakai ?)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  [key: string]: any;
-}
-
 interface AnalyticsData {
-  summary: AnalyticsSummary;
-  pie_chart: PieData[];
-  bar_chart: BarData[];
+  summary: {
+    total_surat: number;
+    total_nominal: number;
+    total_expired: number;
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pie_chart: any[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  bar_chart: any[];
 }
 
 export default function Dashboard() {
   const router = useRouter();
 
-  // --- DATA STATE ---
+  // --- 2. STATE MANAGEMENT ---
   const [letters, setLetters] = useState<Letter[]>([]);
   const [logs, setLogs] = useState<Log[]>([]);
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(
-    null
+    null,
   );
 
-  const [isAdmin, setIsAdmin] = useState(false);
+  // User State
   const [userEmail, setUserEmail] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  // --- UI STATE ---
+  // UI State
   const [isPageLoading, setIsPageLoading] = useState(true);
   const [showLogs, setShowLogs] = useState(false);
   const [showQR, setShowQR] = useState<Letter | null>(null);
+  const [processing, setProcessing] = useState(false);
 
-  // Variable loading untuk tombol delete
-  const [loading, setLoading] = useState(false);
-
+  // Tab & Filter State (Default: Pelaksanaan)
   const [activeTab, setActiveTab] = useState("Jaminan Pelaksanaan");
   const [searchTerm, setSearchTerm] = useState("");
 
-  // --- CHECKLIST STATE ---
+  // Checkbox State
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
-  const API_URL =
-    process.env.NEXT_PUBLIC_API_URL || "https://sijagad-monitoring.vercel.app";
+  // API URL Config
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-  // --- FETCHING DATA ---
-  const fetchLetters = useCallback(async () => {
-    const res = await fetch(`${API_URL}/letters`);
-    if (res.ok) setLetters(await res.json());
-  }, [API_URL]);
+  // --- 3. FETCH DATA ---
 
-  const fetchLogs = useCallback(async () => {
-    const res = await fetch(`${API_URL}/logs`);
-    if (res.ok) setLogs(await res.json());
-  }, [API_URL]);
-
-  const fetchAnalytics = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/api/analytics`);
-      if (res.ok) setAnalyticsData(await res.json());
+      // Fetch Surat
+      const resLetters = await fetch(`${API_URL}/letters`);
+      if (resLetters.ok) {
+        const rawData = await resLetters.json();
+        // 🔥 FITUR ANTI-SAMPAH: Hanya simpan data yang punya ID valid
+        // Ini mencegah Error 422 saat hapus/edit karena data ID null dibuang dari list
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const cleanData = rawData.filter(
+          (item: any) => item.id !== null && item.id !== undefined,
+        );
+        setLetters(cleanData);
+      }
+
+      // Fetch Analytics
+      const resAnalytics = await fetch(`${API_URL}/api/analytics`);
+      if (resAnalytics.ok) setAnalyticsData(await resAnalytics.json());
+
+      // Fetch Logs
+      const resLogs = await fetch(`${API_URL}/logs`);
+      if (resLogs.ok) setLogs(await resLogs.json());
     } catch (error) {
-      console.error("Gagal load analytics", error);
+      console.error("Gagal mengambil data:", error);
+      toast.error("Gagal terhubung ke server backend");
     }
   }, [API_URL]);
 
@@ -143,6 +138,8 @@ export default function Dashboard() {
           return;
         }
         setUserEmail(user.email || "Unknown");
+
+        // Cek Role
         const { data } = await supabase
           .from("profiles")
           .select("role")
@@ -150,74 +147,40 @@ export default function Dashboard() {
           .single();
         if (data?.role === "admin") setIsAdmin(true);
 
-        await fetchLetters();
-        await fetchAnalytics();
+        await fetchData();
       } finally {
-        setTimeout(() => setIsPageLoading(false), 800);
+        setIsPageLoading(false);
       }
     };
     init();
-  }, [router, fetchLetters, fetchAnalytics]);
+  }, [router, fetchData]);
 
-  useEffect(() => {
-    if (showLogs) fetchLogs();
-  }, [showLogs, fetchLogs]);
+  // --- 4. LOGIKA FILTERING & TABS (FIXED) ---
 
-  // --- ACTIONS ---
-  const handleDelete = async (id: number) => {
-    if (!confirm("Yakin ingin menghapus data ini?")) return;
-    const toastId = toast.loading("Menghapus...");
-    try {
-      const res = await fetch(
-        `${API_URL}/letters/${id}?user_email=${userEmail}`,
-        { method: "DELETE" }
-      );
-      if (res.ok) {
-        fetchLetters();
-        fetchAnalytics();
-        toast.success("Terhapus", { id: toastId });
-        setSelectedIds((prev) => prev.filter((pid) => pid !== id));
-      }
-    } catch {
-      toast.error("Gagal", { id: toastId });
-    }
-  };
+  // Filter Data agar Tab TERPISAH dan Pencarian berfungsi
+  const filteredLetters = letters.filter((l) => {
+    // 1. Filter Tab (Wajib Sama)
+    // Menggunakan lowercase agar "Jaminan Pelaksanaan" cocok dengan "jaminan pelaksanaan"
+    const categoryMatch = l.kategori?.toLowerCase() === activeTab.toLowerCase();
 
-  const handleBulkDelete = async () => {
-    if (selectedIds.length === 0) return;
-    if (
-      !confirm(
-        `Yakin ingin menghapus ${selectedIds.length} surat yang dipilih?`
-      )
-    )
-      return;
+    // 2. Filter Search (Opsional)
+    const term = searchTerm.toLowerCase();
+    const searchMatch =
+      l.vendor.toLowerCase().includes(term) ||
+      l.pekerjaan.toLowerCase().includes(term) ||
+      l.nomor_kontrak.toLowerCase().includes(term) ||
+      (l.lokasi && l.lokasi.toLowerCase().includes(term));
 
-    const toastId = toast.loading(`Menghapus ${selectedIds.length} data...`);
-    setLoading(true);
+    return categoryMatch && searchMatch;
+  });
 
-    try {
-      const deletePromises = selectedIds.map((id) =>
-        fetch(`${API_URL}/letters/${id}?user_email=${userEmail}`, {
-          method: "DELETE",
-        })
-      );
-      await Promise.all(deletePromises);
-      await fetchLetters();
-      await fetchAnalytics();
-      setSelectedIds([]);
-      toast.success("Data berhasil dihapus!", { id: toastId });
-    } catch (error) {
-      console.error(error);
-      toast.error("Gagal hapus massal", { id: toastId });
-    } finally {
-      setLoading(false);
-    }
-  };
+  // --- 5. LOGIKA CHECKBOX (FIXED) ---
 
   const toggleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
-      const allIds = paginatedLetters.map((l) => l.id as number);
-      setSelectedIds(allIds);
+      // HANYA pilih ID yang sedang TAMPIL di layar (Filtered)
+      const visibleIds = filteredLetters.map((l) => l.id);
+      setSelectedIds(visibleIds);
     } else {
       setSelectedIds([]);
     }
@@ -225,9 +188,68 @@ export default function Dashboard() {
 
   const toggleSelectOne = (id: number) => {
     if (selectedIds.includes(id)) {
-      setSelectedIds(selectedIds.filter((sid) => sid !== id));
+      setSelectedIds((prev) => prev.filter((item) => item !== id));
     } else {
-      setSelectedIds([...selectedIds, id]);
+      setSelectedIds((prev) => [...prev, id]);
+    }
+  };
+
+  // --- 6. ACTIONS ---
+
+  const handleDelete = async (id: number) => {
+    // Safety Check: Jangan kirim request jika ID null (Penyebab Error 422)
+    if (!id) {
+      toast.error("Data korup (ID Kosong), tidak bisa dihapus.");
+      return;
+    }
+
+    if (!confirm("Yakin ingin menghapus data ini secara permanen?")) return;
+    setProcessing(true);
+    const toastId = toast.loading("Menghapus...");
+
+    try {
+      const res = await fetch(
+        `${API_URL}/letters/${id}?user_email=${userEmail}`,
+        { method: "DELETE" },
+      );
+      if (res.ok) {
+        await fetchData(); // Refresh data agar UI update
+        toast.success("Data terhapus", { id: toastId });
+        setSelectedIds((prev) => prev.filter((item) => item !== id));
+      } else {
+        throw new Error("Gagal menghapus");
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error("Gagal menghapus (Cek Server)", { id: toastId });
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0) return;
+    if (!confirm(`Yakin hapus ${selectedIds.length} data terpilih?`)) return;
+
+    setProcessing(true);
+    const toastId = toast.loading("Menghapus massal...");
+
+    try {
+      const promises = selectedIds.map((id) =>
+        fetch(`${API_URL}/letters/${id}?user_email=${userEmail}`, {
+          method: "DELETE",
+        }),
+      );
+      await Promise.all(promises);
+
+      await fetchData();
+      setSelectedIds([]);
+      toast.success("Berhasil dihapus!", { id: toastId });
+    } catch (e) {
+      console.error(e);
+      toast.error("Gagal hapus massal", { id: toastId });
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -235,15 +257,7 @@ export default function Dashboard() {
     window.open(`${API_URL}/export/excel`, "_blank");
   };
 
-  const filteredLetters = letters.filter(
-    (l) =>
-      l.kategori === activeTab &&
-      (l.vendor.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        l.pekerjaan.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (l.lokasi && l.lokasi.toLowerCase().includes(searchTerm.toLowerCase())))
-  );
-
-  const paginatedLetters = filteredLetters;
+  // Format Rupiah
   const formatRupiah = (num: number) =>
     new Intl.NumberFormat("id-ID", {
       style: "currency",
@@ -251,336 +265,413 @@ export default function Dashboard() {
       maximumFractionDigits: 0,
     }).format(num);
 
+  // --- 7. RENDER UI ---
+
   if (isPageLoading)
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600"></div>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 gap-4">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <p className="text-slate-500 font-medium animate-pulse">
+          Memuat Sistem...
+        </p>
       </div>
     );
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans text-gray-800 animate-in fade-in duration-700 pb-20">
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-24">
       {/* NAVBAR */}
-      <nav className="bg-white/80 backdrop-blur-md sticky top-0 z-50 border-b border-gray-200 shadow-sm px-6 py-4 flex justify-between items-center">
+      <nav className="bg-white/80 backdrop-blur-md sticky top-0 z-50 border-b border-slate-200 px-6 py-4 flex justify-between items-center shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="relative w-11 h-11">
+          <div className="relative w-10 h-10">
             <Image
               src="/SiJAGAD_2.svg"
-              alt="Logo SiJAGAD"
+              alt="Logo"
               fill
               className="object-contain"
               priority
             />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-primary font-display">
+            <h1 className="text-xl font-bold text-slate-900 font-display">
               SiJAGAD
             </h1>
-            <p className="text-[10px] text-gray-400 font-medium tracking-widest uppercase">
+            <p className="text-[10px] text-slate-500 font-bold tracking-widest uppercase">
               PLN UPT MANADO
             </p>
           </div>
         </div>
-        <div className="hidden md:flex items-center gap-6">
+
+        <div className="flex gap-4">
           <Link
             href="/guide"
-            className="flex items-center gap-2 text-sm font-medium text-slate-500 hover:text-blue-600 transition-colors px-3 py-2 rounded-lg hover:bg-blue-50"
+            className="hidden md:flex items-center gap-2 text-sm font-bold text-slate-500 hover:text-blue-600 transition-colors bg-slate-100 px-4 py-2 rounded-xl border border-slate-200"
           >
-            <BookOpen size={18} /> Panduan Sistem
+            <BookOpen size={18} /> Panduan
           </Link>
+          <button
+            onClick={async () => {
+              await supabase.auth.signOut();
+              document.cookie = "token=; path=/; max-age=0";
+              router.push("/");
+            }}
+            className="bg-red-50 text-red-500 p-2.5 rounded-xl hover:bg-red-100 transition-colors border border-red-100"
+            title="Keluar"
+          >
+            <LogOut size={20} />
+          </button>
         </div>
-        <button
-          onClick={async () => {
-            await supabase.auth.signOut();
-            document.cookie = "token=; path=/; max-age=0";
-            router.push("/");
-          }}
-          className="bg-red-50 text-red-500 p-2 rounded-xl hover:bg-red-100 transition-colors"
-        >
-          <LogOut size={20} />
-        </button>
       </nav>
 
-      <main className="max-w-7xl mx-auto p-6 space-y-8">
-        {/* ANALYTICS */}
+      <main className="max-w-7xl mx-auto p-6 space-y-8 mt-2">
+        {/* ANALYTICS CHARTS */}
         {analyticsData ? (
           <AnalyticsCharts data={analyticsData} />
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-pulse">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-32 bg-gray-200 rounded-3xl"></div>
-            ))}
+          <div className="p-8 text-center text-slate-400 bg-white rounded-3xl border border-slate-200">
+            Sedang memuat grafik...
           </div>
         )}
 
-        {/* CONTROLS */}
-        <div className="flex flex-col md:flex-row justify-between items-end gap-6">
-          <div className="bg-gray-200/50 p-1.5 rounded-2xl flex gap-2">
+        {/* --- CONTROLS SECTION --- */}
+        <div className="flex flex-col lg:flex-row justify-between items-end gap-6">
+          {/* TAB SWITCHER (Pastikan ini berfungsi memisahkan data) */}
+          <div className="bg-white p-1.5 rounded-2xl flex gap-1 border border-slate-200 shadow-sm w-full lg:w-auto overflow-x-auto">
             {["Jaminan Pelaksanaan", "Jaminan Pemeliharaan"].map((tab) => (
               <button
                 key={tab}
                 onClick={() => {
                   setActiveTab(tab);
-                  setSelectedIds([]);
+                  setSelectedIds([]); // PENTING: Reset checkbox saat ganti tab agar tidak error seleksi
                 }}
-                className={`px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                className={`px-6 py-3 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${
                   activeTab === tab
-                    ? "bg-primary text-white shadow-lg"
-                    : "text-gray-500 hover:text-gray-700"
+                    ? "bg-slate-900 text-white shadow-md"
+                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
                 }`}
               >
                 {tab}
               </button>
             ))}
           </div>
-          <div className="flex gap-3 w-full md:w-auto">
-            <div className="relative w-full md:w-80">
+
+          {/* SEARCH & TOOLS */}
+          <div className="flex gap-3 w-full lg:w-auto">
+            <div className="relative w-full lg:w-80">
               <Search
-                className="absolute left-3 top-3 text-gray-400"
+                className="absolute left-4 top-3.5 text-slate-400"
                 size={20}
               />
               <input
                 type="text"
-                placeholder="Cari Vendor atau Lokasi..."
-                className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20"
+                placeholder="Cari Vendor, No. Kontrak..."
+                className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-sm transition-all"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
+
             <button
               onClick={handleExport}
-              className="p-2.5 bg-green-50 border border-green-200 rounded-xl text-green-600 hover:bg-green-100 transition-colors flex items-center gap-2"
+              className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-600 hover:bg-emerald-100 transition-colors flex items-center gap-2 shadow-sm"
+              title="Download Excel"
             >
               <FileDown size={20} />{" "}
-              <span className="hidden md:inline font-bold text-xs uppercase">
-                Excel
-              </span>
+              <span className="hidden xl:inline font-bold text-xs">EXCEL</span>
             </button>
+
             <button
               onClick={() => setShowLogs(true)}
-              className="p-2.5 bg-white border border-gray-200 rounded-xl text-gray-500 hover:text-primary transition-colors"
+              className="p-3 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-blue-600 hover:border-blue-200 transition-colors shadow-sm"
+              title="Log Aktivitas"
             >
               <History size={20} />
             </button>
           </div>
         </div>
 
-        {/* TABLE */}
-        <div className="bg-white rounded-3xl shadow-xl overflow-hidden border border-gray-100 flex flex-col max-h-[700px]">
-          <div className="overflow-auto custom-scrollbar">
+        {/* --- MAIN TABLE --- */}
+        <div className="bg-white rounded-[2rem] shadow-xl border border-slate-100 flex flex-col min-h-[500px] overflow-hidden">
+          <div className="overflow-x-auto custom-scrollbar flex-1">
             <table className="w-full text-left relative">
-              <thead className="sticky top-0 z-20 shadow-sm">
-                <tr className="bg-gray-50 border-b border-gray-200 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
-                  <th className="px-6 py-4 bg-gray-50 w-10">
+              <thead className="sticky top-0 z-20 bg-slate-50 border-b border-slate-100 shadow-sm">
+                <tr className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
+                  <th className="px-6 py-5 w-14 text-center">
                     <input
                       type="checkbox"
-                      className="w-4 h-4 rounded text-primary focus:ring-primary"
+                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                       onChange={toggleSelectAll}
+                      // Checked jika semua filteredLetters terpilih (dan ada isinya)
                       checked={
-                        paginatedLetters.length > 0 &&
-                        selectedIds.length === paginatedLetters.length
+                        filteredLetters.length > 0 &&
+                        selectedIds.length === filteredLetters.length
                       }
                     />
                   </th>
-                  <th className="px-6 py-4 bg-gray-50">Vendor & Bank</th>
-                  <th className="px-6 py-4 bg-gray-50">Nominal</th>
-                  <th className="px-6 py-4 bg-gray-50">Lokasi Fisik</th>
-                  <th className="px-6 py-4 bg-gray-50">Masa Berlaku</th>
-                  <th className="px-6 py-4 bg-gray-50">Aksi</th>
+                  <th className="px-6 py-5">Vendor & Bank</th>
+                  <th className="px-6 py-5">Nominal Jaminan</th>
+                  <th className="px-6 py-5">Lokasi Fisik</th>
+                  <th className="px-6 py-5">Status & Masa Berlaku</th>
+                  <th className="px-6 py-5 text-center">Aksi</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {paginatedLetters.map((letter) => {
-                  const end = new Date(letter.tanggal_akhir_garansi);
-                  const diff = Math.ceil(
-                    (end.getTime() - new Date().getTime()) / (1000 * 3600 * 24)
-                  );
-                  let statusColor = "bg-green-100 text-green-700";
-                  let statusLabel = "Aktif";
-                  if (diff <= 0) {
-                    statusColor = "bg-red-500 text-white";
-                    statusLabel = "EXPIRED";
-                  } else if (diff <= 7) {
-                    statusColor = "bg-orange-500 text-white animate-pulse";
-                    statusLabel = `${diff} Hari Lagi`;
-                  } else if (diff <= 30) {
-                    statusColor = "bg-yellow-400 text-gray-900";
-                    statusLabel = "Segera Expire";
-                  }
-                  const isSelected = selectedIds.includes(letter.id!);
 
-                  return (
-                    <tr
-                      key={letter.id}
-                      className={`hover:bg-gray-50/80 transition-colors ${
-                        isSelected ? "bg-blue-50/50" : ""
-                      }`}
-                    >
-                      <td className="px-6 py-4">
-                        <input
-                          type="checkbox"
-                          className="w-4 h-4 rounded text-primary focus:ring-primary cursor-pointer"
-                          checked={isSelected}
-                          onChange={() => toggleSelectOne(letter.id!)}
-                        />
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="font-bold text-gray-900">
-                          {letter.vendor}
-                        </div>
-                        <div className="text-[10px] text-gray-400 flex items-center gap-1 font-medium">
-                          <Building2 size={10} /> {letter.bank_penerbit}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 font-bold text-primary">
-                        {formatRupiah(letter.nominal_jaminan)}
-                      </td>
-                      <td className="px-6 py-4">
-                        {letter.lokasi === "Arsip Lama" ? (
-                          <div className="flex items-center gap-2 text-[10px] font-bold text-white bg-slate-500 px-3 py-1.5 rounded-full w-fit shadow-sm">
-                            <MapPin size={12} /> ARSIP LAMA
+              <tbody className="divide-y divide-slate-100">
+                {filteredLetters.length > 0 ? (
+                  filteredLetters.map((letter) => {
+                    // Logic Status Warna
+                    const endDate = new Date(letter.tanggal_akhir_garansi);
+                    const isValidDate = !isNaN(endDate.getTime());
+                    const diff = isValidDate
+                      ? Math.ceil(
+                          (endDate.getTime() - new Date().getTime()) /
+                            (1000 * 3600 * 24),
+                        )
+                      : 999;
+
+                    let statusColor =
+                      "bg-emerald-100 text-emerald-700 border-emerald-200";
+                    let statusLabel = "AKTIF";
+                    let statusIcon = <Clock size={12} />;
+
+                    if (diff <= 0) {
+                      statusColor = "bg-red-50 text-red-600 border-red-200";
+                      statusLabel = "EXPIRED";
+                    } else if (diff <= 30) {
+                      statusColor =
+                        "bg-amber-50 text-amber-600 border-amber-200";
+                      statusLabel = diff <= 7 ? "KRITIS" : "WARNING";
+                      statusIcon = (
+                        <Clock size={12} className="animate-pulse" />
+                      );
+                    }
+
+                    const isSelected = selectedIds.includes(letter.id);
+
+                    return (
+                      <tr
+                        key={letter.id}
+                        className={`group transition-colors ${isSelected ? "bg-blue-50/60" : "hover:bg-slate-50/80"}`}
+                      >
+                        {/* Checkbox */}
+                        <td className="px-6 py-4 text-center">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                            checked={isSelected}
+                            onChange={() => toggleSelectOne(letter.id)}
+                          />
+                        </td>
+
+                        {/* Vendor Info */}
+                        <td className="px-6 py-4">
+                          <div className="font-bold text-slate-900 text-sm mb-1">
+                            {letter.vendor}
                           </div>
-                        ) : (
-                          <div className="flex items-center gap-2 text-xs text-gray-600 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100 w-fit">
-                            <MapPin size={12} className="text-orange-500" />{" "}
-                            {letter.lokasi || "-"}
+                          <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium bg-slate-100 px-2 py-1 rounded-lg w-fit">
+                            <Building2 size={12} /> {letter.bank_penerbit}
                           </div>
-                        )}
-                      </td>
-                      <td className="px-6 py-4">
-                        <div
-                          className={`px-3 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1 mb-1 ${statusColor}`}
-                        >
-                          <Clock size={10} /> {statusLabel}
-                        </div>
-                        <div className="text-[10px] text-gray-400 block italic">
-                          {letter.tanggal_akhir_garansi}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <div className="flex gap-1">
-                          {isAdmin && (
-                            <>
-                              {/* 🔄 TOMBOL EDIT: PINDAH KE HALAMAN BARU */}
-                              <Link
-                                href={`/dashboard/input?id=${letter.id}`}
-                                className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg"
-                              >
-                                <Edit size={16} />
-                              </Link>
-                              <button
-                                onClick={() => handleDelete(letter.id!)}
-                                className="p-2 text-red-500 hover:bg-red-50 rounded-lg"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                              <button
-                                onClick={() => setShowQR(letter)}
-                                className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg"
-                                title="Cetak QR Arsip"
-                              >
-                                <QrCode size={16} />
-                              </button>
-                            </>
+                          <div
+                            className="text-[10px] text-slate-400 mt-2 truncate max-w-[220px]"
+                            title={letter.pekerjaan}
+                          >
+                            {letter.pekerjaan}
+                          </div>
+                        </td>
+
+                        {/* Nominal */}
+                        <td className="px-6 py-4 font-bold text-slate-700 text-sm">
+                          {formatRupiah(letter.nominal_jaminan)}
+                        </td>
+
+                        {/* Lokasi */}
+                        <td className="px-6 py-4">
+                          {letter.lokasi === "Arsip Lama" ? (
+                            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-white bg-slate-500 px-2.5 py-1 rounded-full shadow-sm">
+                              <MapPin size={10} /> ARSIP LAMA
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 text-xs text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-lg shadow-sm">
+                              <MapPin size={12} className="text-orange-500" />
+                              <span className="font-medium">
+                                {letter.lokasi || "-"}
+                              </span>
+                            </span>
                           )}
-                          {letter.file_url && (
-                            <a
-                              href={letter.file_url}
-                              target="_blank"
-                              className="p-2 text-green-600 hover:bg-green-50 rounded-lg"
+                        </td>
+
+                        {/* Status */}
+                        <td className="px-6 py-4">
+                          <div
+                            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold border ${statusColor} mb-1.5`}
+                          >
+                            {statusIcon} {statusLabel}
+                          </div>
+                          <div className="text-[11px] text-slate-500 font-medium flex flex-col">
+                            <span>Exp: {letter.tanggal_akhir_garansi}</span>
+                            {diff > 0 && diff <= 30 && (
+                              <span className="text-orange-500 font-bold text-[10px]">
+                                ({diff} Hari Lagi)
+                              </span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* Aksi */}
+                        <td className="px-6 py-4">
+                          <div className="flex justify-center gap-2 opacity-100">
+                            {/* 🔥 TOMBOL EDIT (FUNGSI KEMBALI) 🔥 */}
+                            <Link
+                              href={`/dashboard/input?id=${letter.id}`}
+                              className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-600 hover:text-white rounded-xl transition-all border border-blue-100"
+                              title="Edit Data (Perbaiki Typo)"
                             >
-                              <Paperclip size={16} />
-                            </a>
-                          )}
+                              <Edit size={16} />
+                            </Link>
+
+                            <button
+                              onClick={() => handleDelete(letter.id)}
+                              className="p-2 text-red-500 bg-red-50 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100"
+                              title="Hapus Permanen"
+                              disabled={processing}
+                            >
+                              <Trash2 size={16} />
+                            </button>
+
+                            <button
+                              onClick={() => setShowQR(letter)}
+                              className="p-2 text-purple-600 bg-purple-50 hover:bg-purple-600 hover:text-white rounded-xl transition-all border border-purple-100"
+                              title="Cetak QR"
+                            >
+                              <QrCode size={16} />
+                            </button>
+
+                            {letter.file_url && (
+                              <a
+                                href={letter.file_url}
+                                target="_blank"
+                                className="p-2 text-emerald-600 bg-emerald-50 hover:bg-emerald-600 hover:text-white rounded-xl transition-all border border-emerald-100"
+                                title="Download PDF"
+                              >
+                                <Paperclip size={16} />
+                              </a>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <tr>
+                    <td colSpan={6} className="text-center py-24">
+                      <div className="flex flex-col items-center justify-center text-slate-300">
+                        <div className="bg-slate-50 p-4 rounded-full mb-4">
+                          <Search size={32} className="opacity-50" />
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
+                        <p className="text-lg font-bold text-slate-400">
+                          Tidak ada data ditemukan
+                        </p>
+                        <p className="text-xs max-w-xs mx-auto mt-2">
+                          Belum ada data untuk kategori{" "}
+                          <strong>"{activeTab}"</strong> atau kata kunci tidak
+                          cocok.
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
-            {paginatedLetters.length === 0 && (
-              <div className="text-center py-10 text-gray-400 text-sm">
-                Tidak ada data ditemukan
-              </div>
-            )}
           </div>
         </div>
 
-        {/* BULK ACTION & ADD BUTTON */}
+        {/* --- BULK ACTION BAR (MUNCUL JIKA CHECKBOX DIPILIH) --- */}
         <AnimatePresence>
-          {isAdmin && selectedIds.length > 0 && (
+          {selectedIds.length > 0 && (
             <motion.div
               initial={{ y: 100, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 100, opacity: 0 }}
-              className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-white border border-gray-200 shadow-2xl rounded-full px-6 py-3 flex items-center gap-4 z-50"
+              className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white shadow-2xl rounded-full px-8 py-4 flex items-center gap-6 z-50 border border-slate-700"
             >
-              <div className="flex items-center gap-2">
-                <div className="bg-primary text-white w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold">
+              <div className="flex items-center gap-3">
+                <div className="bg-white text-slate-900 w-8 h-8 rounded-full flex items-center justify-center text-sm font-black border-2 border-slate-200">
                   {selectedIds.length}
                 </div>
-                <span className="text-sm font-bold text-gray-700">Dipilih</span>
+                <span className="text-sm font-bold tracking-wide">
+                  Data Terpilih
+                </span>
               </div>
-              <div className="h-6 w-px bg-gray-300"></div>
 
-              {/* ✅ MENGGUNAKAN LOADING STATE */}
+              <div className="h-8 w-px bg-slate-700"></div>
+
               <button
                 onClick={handleBulkDelete}
-                disabled={loading}
-                className="text-red-500 hover:text-red-700 font-bold text-sm flex items-center gap-2 disabled:opacity-50"
+                disabled={processing}
+                className="text-red-400 hover:text-red-300 font-bold text-sm flex items-center gap-2 transition-colors disabled:opacity-50"
               >
-                <Trash2 size={18} />{" "}
-                {loading ? "Menghapus..." : "Hapus Terpilih"}
+                {processing ? (
+                  <span className="animate-pulse">Memproses...</span>
+                ) : (
+                  <>
+                    <Trash2 size={18} /> Hapus Masal
+                  </>
+                )}
               </button>
 
               <button
                 onClick={() => setSelectedIds([])}
-                className="text-gray-400 hover:text-gray-600 ml-2"
+                className="text-slate-500 hover:text-white transition-colors ml-2 bg-slate-800 p-1 rounded-full"
               >
-                <X size={18} />
+                <X size={16} />
               </button>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* 🔄 TOMBOL TAMBAH: PINDAH KE HALAMAN BARU */}
-        {isAdmin && (
-          <Link href="/dashboard/input">
-            <button className="fixed bottom-8 right-8 bg-primary text-white p-4 rounded-full shadow-2xl hover:scale-110 transition-transform z-40">
-              <Plus size={24} />
-            </button>
-          </Link>
-        )}
+        {/* 🔥 TOMBOL TAMBAH (Floating Action Button) - PASTI MUNCUL 🔥 */}
+        <Link href="/dashboard/input">
+          <button
+            className="fixed bottom-8 right-8 bg-blue-600 text-white p-5 rounded-full shadow-[0_10px_40px_-10px_rgba(37,99,235,0.5)] hover:scale-110 hover:bg-blue-700 transition-all z-40 group flex items-center justify-center border-4 border-white/20 backdrop-blur-sm"
+            title="Tambah Data Baru"
+          >
+            <Plus
+              size={32}
+              className="group-hover:rotate-90 transition-transform duration-300"
+            />
+          </button>
+        </Link>
       </main>
 
-      {/* MODAL QR CODE */}
+      {/* --- MODALS (QR CODE & LOGS) --- */}
       <AnimatePresence>
         {showQR && (
-          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 print:bg-white print:p-0">
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 print:bg-white print:p-0">
             <motion.div
-              initial={{ scale: 0.8 }}
-              animate={{ scale: 1 }}
-              className="bg-white rounded-[32px] p-8 max-w-sm w-full flex flex-col items-center shadow-2xl print:shadow-none print:w-[70mm] print:h-[100mm] print:p-0 print:m-0"
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-[32px] p-8 max-w-sm w-full flex flex-col items-center shadow-2xl print:shadow-none print:w-[70mm] print:h-[100mm] print:p-0 print:m-0 border border-slate-200"
             >
+              {/* CSS Print Khusus */}
               <style
                 dangerouslySetInnerHTML={{
                   __html: ` @media print { body * { visibility: hidden; } .shopee-label, .shopee-label * { visibility: visible; } .shopee-label { position: fixed; left: 0; top: 0; width: 70mm !important; height: 100mm !important; padding: 10mm; display: flex; flex-direction: column; align-items: center; justify-content: center; background: white !important; } @page { size: 70mm 100mm; margin: 0; } .no-print { display: none !important; } } `,
                 }}
               />
-              <div className="shopee-label flex flex-col items-center w-full border-2 border-gray-100 p-6 rounded-[24px] print:border-0">
-                <div className="text-center mb-4">
-                  <h3 className="font-extrabold text-xl text-slate-800 leading-tight">
-                    QR Label Arsip
+
+              <div className="shopee-label flex flex-col items-center w-full border-2 border-slate-100 p-6 rounded-[24px] print:border-0 bg-slate-50/50">
+                <div className="text-center mb-6">
+                  <h3 className="font-black text-2xl text-slate-900 leading-tight tracking-tight">
+                    QR ARSIP
                   </h3>
-                  <p className="text-[10px] text-slate-400 font-bold tracking-[0.2em] uppercase">
-                    SIJAGAD - PLN UPT MANADO
+                  <p className="text-[10px] text-slate-400 font-bold tracking-[0.3em] uppercase mt-1">
+                    PLN UPT MANADO
                   </p>
                 </div>
-                <div className="p-4 bg-white border-[3px] border-slate-900 rounded-2xl mb-5">
+                <div className="p-4 bg-white border-4 border-slate-900 rounded-3xl mb-6 shadow-sm">
                   <QRCode
                     value={`SiJAGAD_ID:${showQR.id}_VENDOR:${showQR.vendor}`}
-                    size={180}
+                    size={160}
                     level="H"
                   />
                 </div>
@@ -588,12 +679,12 @@ export default function Dashboard() {
                   <p className="text-lg font-black text-slate-900 uppercase leading-none break-words px-2">
                     {showQR.vendor}
                   </p>
-                  <p className="text-sm text-slate-500 font-mono mt-2 tracking-widest border-t border-slate-100 pt-2">
+                  <p className="text-xs text-slate-500 font-mono mt-3 tracking-wider border-t border-slate-200 pt-3">
                     {showQR.nomor_kontrak}
                   </p>
-                  <div className="mt-3 bg-slate-900 text-white px-4 py-1.5 rounded-full inline-flex items-center gap-2">
-                    <span className="text-[10px] font-bold tracking-widest uppercase">
-                      Lokasi :
+                  <div className="mt-4 bg-slate-900 text-white px-4 py-1.5 rounded-full inline-flex items-center gap-2 shadow-lg shadow-slate-900/20">
+                    <span className="text-[10px] font-bold tracking-widest uppercase text-slate-300">
+                      LOKASI
                     </span>
                     <span className="text-sm font-black">
                       {showQR.lokasi || "-"}
@@ -601,18 +692,18 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-              <div className="flex gap-2 w-full mt-8 no-print">
+              <div className="flex gap-3 w-full mt-8 no-print">
                 <button
                   onClick={() => window.print()}
-                  className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-black text-sm flex items-center justify-center gap-2 shadow-xl hover:bg-slate-800 active:scale-95 transition-all"
+                  className="flex-1 bg-slate-900 text-white py-4 rounded-2xl font-bold text-sm flex items-center justify-center gap-2 shadow-xl hover:bg-slate-800 active:scale-95 transition-all"
                 >
-                  <Printer size={20} /> CETAK LABEL
+                  <Printer size={18} /> CETAK
                 </button>
                 <button
                   onClick={() => setShowQR(null)}
-                  className="flex-1 bg-slate-100 text-slate-500 py-4 rounded-2xl font-bold text-sm hover:bg-slate-200 transition-colors"
+                  className="flex-1 bg-white border-2 border-slate-100 text-slate-500 py-4 rounded-2xl font-bold text-sm hover:bg-slate-50 transition-colors"
                 >
-                  BATAL
+                  TUTUP
                 </button>
               </div>
             </motion.div>
@@ -620,41 +711,58 @@ export default function Dashboard() {
         )}
       </AnimatePresence>
 
-      {/* MODAL LOGS */}
       <AnimatePresence>
         {showLogs && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[80vh]"
+              initial={{ opacity: 0, y: 50 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 50 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-lg flex flex-col max-h-[80vh] overflow-hidden"
             >
-              <div className="p-6 border-b flex justify-between items-center">
-                <h3 className="font-bold flex items-center gap-2 text-primary">
-                  <History size={20} /> Riwayat Aktivitas
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <h3 className="font-bold flex items-center gap-2 text-slate-800 text-lg">
+                  <History size={20} className="text-blue-600" /> Riwayat
+                  Aktivitas
                 </h3>
-                <button onClick={() => setShowLogs(false)}>
-                  <X size={20} />
+                <button
+                  onClick={() => setShowLogs(false)}
+                  className="p-2 bg-white rounded-full hover:bg-slate-200 transition-colors"
+                >
+                  <X size={20} className="text-slate-500" />
                 </button>
               </div>
-              <div className="p-6 space-y-4 overflow-y-auto">
-                {logs.map((log) => (
-                  <div
-                    key={log.id}
-                    className="text-sm border-b pb-3 last:border-0 border-gray-100"
-                  >
-                    <p className="font-bold text-gray-800">
-                      {log.action} -{" "}
-                      <span className="font-normal text-gray-600 italic tracking-tight">
+              <div className="p-6 space-y-4 overflow-y-auto custom-scrollbar bg-slate-50/30">
+                {logs.length > 0 ? (
+                  logs.map((log) => (
+                    <div
+                      key={log.id}
+                      className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm"
+                    >
+                      <div className="flex justify-between items-start mb-1">
+                        <span
+                          className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${log.action === "DELETE" ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"}`}
+                        >
+                          {log.action}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-medium">
+                          {new Date(log.created_at).toLocaleString()}
+                        </span>
+                      </div>
+                      <p className="font-bold text-slate-800 text-sm mt-1">
                         {log.target}
-                      </span>
-                    </p>
-                    <div className="flex justify-between text-[10px] text-gray-400 mt-1 uppercase font-medium">
-                      <span>{log.user_email}</span>
-                      <span>{new Date(log.created_at).toLocaleString()}</span>
+                      </p>
+                      <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-slate-300"></span>{" "}
+                        {log.user_email}
+                      </p>
                     </div>
+                  ))
+                ) : (
+                  <div className="text-center text-slate-400 py-10">
+                    Belum ada riwayat aktivitas.
                   </div>
-                ))}
+                )}
               </div>
             </motion.div>
           </div>

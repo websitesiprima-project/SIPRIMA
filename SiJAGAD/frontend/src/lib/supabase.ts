@@ -1,8 +1,21 @@
 import { createClient } from "@supabase/supabase-js";
 
-// --- KITA MASUKKAN LANGSUNG DI SINI AGAR TIDAK SALAH BACA .ENV ---
-const supabaseUrl = "https://ivwtweloifwdfqzrlbjh.supabase.co";
-const supabaseKey =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2d3R3ZWxvaWZ3ZGZxenJsYmpoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0MzQ5NjMsImV4cCI6MjA4MjAxMDk2M30.ahHP4-QM7UdQVb5fDccfw5Ig6-Ludp2RaKd59jbLWF0";
+// 1. Ambil dari environment variable
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+// 2. DEBUGGING: Cek apakah terbaca?
+// Lihat di Terminal VS Code Anda saat dijalankan
+console.log("--- DEBUG SUPABASE CONFIG ---");
+console.log("URL Terbaca:", supabaseUrl ? "YA" : "TIDAK");
+console.log("Key Terbaca:", supabaseKey ? "YA" : "TIDAK");
+
+// 3. Pengecekan Keras (Hard Check)
+// Jika kosong, aplikasi akan stop dan kasih tau Anda.
+if (!supabaseUrl || !supabaseKey) {
+  throw new Error(
+    "FATAL: Supabase URL atau Anon Key tidak ditemukan di .env.local",
+  );
+}
 
 export const supabase = createClient(supabaseUrl, supabaseKey);
