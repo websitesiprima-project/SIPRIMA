@@ -24,5 +24,4 @@ frontend/.env.local
 
 # --- DATA & DOCUMENTS (BARU) ---
 *.csv
-*.xlsx
 *.xls

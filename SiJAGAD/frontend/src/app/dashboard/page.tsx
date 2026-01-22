@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { supabase } from "../../lib/supabase";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -23,11 +23,13 @@ import {
   Building2,
   FileDown,
   BookOpen,
+  FileText,
+  Filter, // Icon baru untuk Filter
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast, Toaster } from "react-hot-toast";
 
-// --- 1. DEFINISI TIPE DATA YANG KUAT (TYPE SAFETY) ---
+// --- 1. DEFINISI TIPE DATA ---
 
 interface Letter {
   id: number;
@@ -55,14 +57,12 @@ interface Log {
   created_at: string;
 }
 
-// Interface Khusus untuk Pie Chart (Wajib ada value & color)
 interface PieChartItem {
   name: string;
   value: number;
   color: string;
 }
 
-// Interface Khusus untuk Bar Chart (Wajib ada total)
 interface BarChartItem {
   name: string;
   total: number;
@@ -84,6 +84,8 @@ export default function Dashboard() {
   // --- 2. STATE MANAGEMENT ---
   const [letters, setLetters] = useState<Letter[]>([]);
   const [logs, setLogs] = useState<Log[]>([]);
+
+  // Analytics kita hitung di Frontend biar sinkron
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(
     null,
   );
@@ -98,9 +100,12 @@ export default function Dashboard() {
   const [showQR, setShowQR] = useState<Letter | null>(null);
   const [processing, setProcessing] = useState(false);
 
-  // Tab & Filter State (Default: Pelaksanaan)
+  // Tab & Filter State
   const [activeTab, setActiveTab] = useState("Jaminan Pelaksanaan");
   const [searchTerm, setSearchTerm] = useState("");
+
+  // 🔥 STATE BARU: Filter Status
+  const [filterStatus, setFilterStatus] = useState("Semua"); // Semua, Aktif, Expired, Selesai
 
   // Checkbox State
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -108,7 +113,28 @@ export default function Dashboard() {
   // API URL Config
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-  // --- 3. FETCH DATA ---
+  // --- 3. HELPER: HITUNG STATUS REAL-TIME ---
+  // Fungsi ini menentukan status berdasarkan Tanggal, BUKAN database text semata.
+  const getRealStatus = (letter: Letter) => {
+    // 1. Jika di database sudah ditandai "Selesai", maka statusnya Selesai (Override tanggal)
+    if (letter.status?.toLowerCase() === "selesai") return "Selesai";
+
+    // 2. Cek Tanggal untuk Expired/Aktif
+    const endDate = new Date(letter.tanggal_akhir_garansi);
+    const isValidDate = !isNaN(endDate.getTime());
+
+    // Jika tanggal error, anggap aktif saja biar aman
+    if (!isValidDate) return "Aktif";
+
+    const diff = Math.ceil(
+      (endDate.getTime() - new Date().getTime()) / (1000 * 3600 * 24),
+    );
+
+    if (diff <= 0) return "Expired";
+    return "Aktif";
+  };
+
+  // --- 4. FETCH DATA ---
 
   const fetchData = useCallback(async () => {
     try {
@@ -116,16 +142,11 @@ export default function Dashboard() {
       const resLetters = await fetch(`${API_URL}/letters`);
       if (resLetters.ok) {
         const rawData = await resLetters.json();
-        // 🔥 FITUR ANTI-SAMPAH: Hanya simpan data yang punya ID valid
         const cleanData = rawData.filter(
           (item: Letter) => item.id !== null && item.id !== undefined,
         );
         setLetters(cleanData);
       }
-
-      // Fetch Analytics
-      const resAnalytics = await fetch(`${API_URL}/api/analytics`);
-      if (resAnalytics.ok) setAnalyticsData(await resAnalytics.json());
 
       // Fetch Logs
       const resLogs = await fetch(`${API_URL}/logs`);
@@ -136,22 +157,72 @@ export default function Dashboard() {
     }
   }, [API_URL]);
 
+  // --- 5. LOGIKA SINKRONISASI CHART (USEMEMO) ---
+  // Kita hitung Chart DI SINI, berdasarkan data 'letters' yang sudah diambil.
+  // Jadi tabel dan chart pasti 100% sama datanya.
+
+  useMemo(() => {
+    if (letters.length === 0) return;
+
+    let totalNominal = 0;
+    let countExpired = 0;
+    const statusCounts: Record<string, number> = {
+      Aktif: 0,
+      Expired: 0,
+      Selesai: 0,
+    };
+    const vendorStats: Record<string, number> = {};
+
+    letters.forEach((l) => {
+      // Gunakan Helper Real Status agar konsisten dengan Tabel
+      const realStatus = getRealStatus(l);
+
+      // Update Count
+      statusCounts[realStatus] = (statusCounts[realStatus] || 0) + 1;
+      if (realStatus === "Expired") countExpired++;
+
+      // Update Nominal
+      totalNominal += Number(l.nominal_jaminan) || 0;
+
+      // Update Vendor Stats (Top 5)
+      vendorStats[l.vendor] =
+        (vendorStats[l.vendor] || 0) + Number(l.nominal_jaminan);
+    });
+
+    // Format Data untuk Chart Component
+    const pieData: PieChartItem[] = [
+      { name: "Aktif", value: statusCounts["Aktif"], color: "#10B981" }, // Hijau
+      { name: "Expired", value: statusCounts["Expired"], color: "#EF4444" }, // Merah
+      { name: "Selesai", value: statusCounts["Selesai"], color: "#3B82F6" }, // Biru
+    ].filter((d) => d.value > 0);
+
+    const barData: BarChartItem[] = Object.entries(vendorStats)
+      .sort(([, a], [, b]) => b - a) // Urutkan terbesar
+      .slice(0, 5) // Ambil 5 teratas
+      .map(([name, total]) => ({ name: name.substring(0, 15) + "...", total }));
+
+    setAnalyticsData({
+      summary: {
+        total_surat: letters.length,
+        total_nominal: totalNominal,
+        total_expired: countExpired,
+      },
+      pie_chart: pieData,
+      bar_chart: barData,
+    });
+  }, [letters]);
+
   useEffect(() => {
     const init = async () => {
       try {
         const {
           data: { user },
         } = await supabase.auth.getUser();
-
-        // PENTING: Redirect jika tidak ada user
         if (!user) {
           router.replace("/auth");
           return;
         }
-
         setUserEmail(user.email || "Unknown");
-
-        // Cek Role (Opsional, jika nanti dipakai)
         const { data } = await supabase
           .from("profiles")
           .select("role")
@@ -160,8 +231,6 @@ export default function Dashboard() {
         if (data?.role === "admin") setIsAdmin(true);
 
         await fetchData();
-
-        // Matikan loading hanya jika user valid & data terambil
         setIsPageLoading(false);
       } catch (error) {
         console.error("Init Error:", error);
@@ -171,13 +240,21 @@ export default function Dashboard() {
     init();
   }, [router, fetchData]);
 
-  // --- 4. LOGIKA FILTERING & TABS ---
+  // --- 6. LOGIKA FILTERING UTAMA ---
 
   const filteredLetters = letters.filter((l) => {
-    // 1. Filter Tab (Case Insensitive)
+    // 1. Filter Tab (Kategori)
     const categoryMatch = l.kategori?.toLowerCase() === activeTab.toLowerCase();
 
-    // 2. Filter Search
+    // 2. Filter Status (Aktif/Expired/Selesai)
+    // Kita gunakan getRealStatus agar logicnya SAMA PERSIS dengan warna tabel
+    const currentStatus = getRealStatus(l);
+    let statusMatch = true;
+    if (filterStatus !== "Semua") {
+      statusMatch = currentStatus === filterStatus;
+    }
+
+    // 3. Filter Search
     const term = searchTerm.toLowerCase();
     const searchMatch =
       l.vendor.toLowerCase().includes(term) ||
@@ -185,14 +262,13 @@ export default function Dashboard() {
       l.nomor_kontrak.toLowerCase().includes(term) ||
       (l.lokasi && l.lokasi.toLowerCase().includes(term));
 
-    return categoryMatch && searchMatch;
+    return categoryMatch && statusMatch && searchMatch;
   });
 
-  // --- 5. LOGIKA CHECKBOX ---
+  // --- 7. LOGIKA CHECKBOX ---
 
   const toggleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
-      // HANYA pilih ID yang sedang TAMPIL di layar (Filtered)
       const visibleIds = filteredLetters.map((l) => l.id);
       setSelectedIds(visibleIds);
     } else {
@@ -208,14 +284,13 @@ export default function Dashboard() {
     }
   };
 
-  // --- 6. ACTIONS ---
+  // --- 8. ACTIONS ---
 
   const handleDelete = async (id: number) => {
     if (!id) {
       toast.error("Data korup (ID Kosong), tidak bisa dihapus.");
       return;
     }
-
     if (!confirm("Yakin ingin menghapus data ini secara permanen?")) return;
 
     setProcessing(true);
@@ -272,7 +347,6 @@ export default function Dashboard() {
     window.open(`${API_URL}/export/excel`, "_blank");
   };
 
-  // Format Rupiah Helper
   const formatRupiah = (num: number) =>
     new Intl.NumberFormat("id-ID", {
       style: "currency",
@@ -280,7 +354,7 @@ export default function Dashboard() {
       maximumFractionDigits: 0,
     }).format(num);
 
-  // --- 7. RENDER UI ---
+  // --- 9. RENDER UI ---
 
   if (isPageLoading)
     return (
@@ -294,7 +368,6 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-24">
-      {/* Toast Container */}
       <Toaster position="top-center" reverseOrder={false} />
 
       {/* NAVBAR */}
@@ -341,12 +414,12 @@ export default function Dashboard() {
       </nav>
 
       <main className="max-w-7xl mx-auto p-6 space-y-8 mt-2">
-        {/* ANALYTICS CHARTS */}
+        {/* ANALYTICS CHARTS (Sekarang Sinkron!) */}
         {analyticsData ? (
           <AnalyticsCharts data={analyticsData} />
         ) : (
           <div className="p-8 text-center text-slate-400 bg-white rounded-3xl border border-slate-200 shadow-sm animate-pulse">
-            Sedang memuat grafik analitik...
+            Sedang menghitung grafik real-time...
           </div>
         )}
 
@@ -372,8 +445,31 @@ export default function Dashboard() {
             ))}
           </div>
 
-          {/* SEARCH & TOOLS */}
-          <div className="flex gap-3 w-full lg:w-auto">
+          {/* SEARCH & FILTER TOOLS */}
+          <div className="flex flex-wrap lg:flex-nowrap gap-3 w-full lg:w-auto">
+            {/* 🔥 FILTER DROPDOWN STATUS 🔥 */}
+            <div className="relative w-full lg:w-48">
+              <Filter
+                className="absolute left-4 top-3.5 text-slate-400 pointer-events-none"
+                size={18}
+              />
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 shadow-sm text-sm font-medium text-slate-700 appearance-none cursor-pointer hover:bg-slate-50 transition-colors"
+              >
+                <option value="Semua">Semua Status</option>
+                <option value="Aktif">✅ Hanya Aktif</option>
+                <option value="Expired">🚨 Hanya Expired</option>
+                <option value="Selesai">🏁 Selesai</option>
+              </select>
+              {/* Panah Dropdown Custom */}
+              <div className="absolute right-4 top-4 pointer-events-none">
+                <div className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[6px] border-t-slate-400"></div>
+              </div>
+            </div>
+
+            {/* SEARCH BAR */}
             <div className="relative w-full lg:w-80">
               <Search
                 className="absolute left-4 top-3.5 text-slate-400"
@@ -388,18 +484,20 @@ export default function Dashboard() {
               />
             </div>
 
+            {/* EXPORT BUTTON */}
             <button
               onClick={handleExport}
-              className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-600 hover:bg-emerald-100 transition-colors flex items-center gap-2 shadow-sm"
+              className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-600 hover:bg-emerald-100 transition-colors flex items-center justify-center gap-2 shadow-sm flex-1 lg:flex-none"
               title="Download Excel"
             >
               <FileDown size={20} />{" "}
               <span className="hidden xl:inline font-bold text-xs">EXCEL</span>
             </button>
 
+            {/* LOG BUTTON */}
             <button
               onClick={() => setShowLogs(true)}
-              className="p-3 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-blue-600 hover:border-blue-200 transition-colors shadow-sm"
+              className="p-3 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-blue-600 hover:border-blue-200 transition-colors shadow-sm flex-1 lg:flex-none flex justify-center"
               title="Log Aktivitas"
             >
               <History size={20} />
@@ -424,7 +522,7 @@ export default function Dashboard() {
                       }
                     />
                   </th>
-                  <th className="px-6 py-5">Vendor & Bank</th>
+                  <th className="px-6 py-5">Vendor & Kontrak</th>
                   <th className="px-6 py-5">Nominal Jaminan</th>
                   <th className="px-6 py-5">Lokasi Fisik</th>
                   <th className="px-6 py-5">Status & Masa Berlaku</th>
@@ -444,12 +542,22 @@ export default function Dashboard() {
                         )
                       : 999;
 
+                    // LOGIC WARNA (Sama persis dengan getRealStatus)
                     let statusColor =
                       "bg-emerald-100 text-emerald-700 border-emerald-200";
                     let statusLabel = "AKTIF";
                     let statusIcon = <Clock size={12} />;
 
-                    if (diff <= 0) {
+                    // Cek Override dari Database dulu
+                    if (letter.status?.toLowerCase() === "selesai") {
+                      statusColor = "bg-blue-100 text-blue-700 border-blue-200";
+                      statusLabel = "SELESAI";
+                      statusIcon = (
+                        <div className="w-2 h-2 bg-blue-600 rounded-full" />
+                      );
+                    }
+                    // Jika belum selesai, cek tanggal
+                    else if (diff <= 0) {
                       statusColor = "bg-red-50 text-red-600 border-red-200";
                       statusLabel = "EXPIRED";
                     } else if (diff <= 30) {
@@ -480,11 +588,17 @@ export default function Dashboard() {
                           />
                         </td>
 
-                        {/* Vendor Info */}
+                        {/* Vendor Info & No Kontrak */}
                         <td className="px-6 py-4">
                           <div className="font-bold text-slate-900 text-sm mb-1">
                             {letter.vendor}
                           </div>
+
+                          <div className="flex items-center gap-1.5 text-xs text-slate-700 font-mono mb-2 bg-blue-50 border border-blue-100 px-2 py-1 rounded w-fit">
+                            <FileText size={12} className="text-blue-500" />
+                            {letter.nomor_kontrak}
+                          </div>
+
                           <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium bg-slate-100 px-2 py-1 rounded-lg w-fit">
                             <Building2 size={12} /> {letter.bank_penerbit}
                           </div>
@@ -526,11 +640,14 @@ export default function Dashboard() {
                           </div>
                           <div className="text-[11px] text-slate-500 font-medium flex flex-col">
                             <span>Exp: {letter.tanggal_akhir_garansi}</span>
-                            {diff > 0 && diff <= 30 && (
-                              <span className="text-orange-500 font-bold text-[10px]">
-                                ({diff} Hari Lagi)
-                              </span>
-                            )}
+                            {/* Hitung diff hanya jika belum Selesai dan belum Expired yang parah */}
+                            {diff > 0 &&
+                              diff <= 30 &&
+                              statusLabel !== "SELESAI" && (
+                                <span className="text-orange-500 font-bold text-[10px]">
+                                  ({diff} Hari Lagi)
+                                </span>
+                              )}
                           </div>
                         </td>
 
@@ -588,11 +705,9 @@ export default function Dashboard() {
                         <p className="text-lg font-bold text-slate-400">
                           Tidak ada data ditemukan
                         </p>
-                        {/* FIX ESLINT QUOTE DISINI: */}
                         <p className="text-xs max-w-xs mx-auto mt-2">
-                          Belum ada data untuk kategori{" "}
-                          <strong>&quot;{activeTab}&quot;</strong> atau kata
-                          kunci tidak cocok.
+                          Coba ubah filter <strong>{filterStatus}</strong> atau
+                          kategori <strong>{activeTab}</strong>.
                         </p>
                       </div>
                     </td>
@@ -688,7 +803,10 @@ export default function Dashboard() {
                 </div>
                 <div className="p-4 bg-white border-4 border-slate-900 rounded-3xl mb-6 shadow-sm">
                   <QRCode
-                    value={`SiJAGAD_ID:${showQR.id}_VENDOR:${showQR.vendor}`}
+                    value={
+                      showQR.file_url ||
+                      `SiJAGAD_ID:${showQR.id}_VENDOR:${showQR.vendor}`
+                    }
                     size={160}
                     level="H"
                   />
