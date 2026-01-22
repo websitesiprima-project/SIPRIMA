@@ -24,13 +24,12 @@ import {
   FileDown,
   BookOpen,
   FileText,
-  Filter, // Icon baru untuk Filter
+  Filter,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast, Toaster } from "react-hot-toast";
 
-// --- 1. DEFINISI TIPE DATA ---
-
+// --- TIPE DATA ---
 interface Letter {
   id: number;
   vendor: string;
@@ -81,86 +80,63 @@ interface AnalyticsData {
 export default function Dashboard() {
   const router = useRouter();
 
-  // --- 2. STATE MANAGEMENT ---
+  // --- STATE ---
   const [letters, setLetters] = useState<Letter[]>([]);
   const [logs, setLogs] = useState<Log[]>([]);
-
-  // Analytics kita hitung di Frontend biar sinkron
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(
     null,
   );
 
-  // User State
   const [userEmail, setUserEmail] = useState("");
-  const [isAdmin, setIsAdmin] = useState(false); // eslint-disable-line @typescript-eslint/no-unused-vars
+  const [isAdmin, setIsAdmin] = useState(false); // Default bukan admin
 
-  // UI State
   const [isPageLoading, setIsPageLoading] = useState(true);
   const [showLogs, setShowLogs] = useState(false);
   const [showQR, setShowQR] = useState<Letter | null>(null);
   const [processing, setProcessing] = useState(false);
 
-  // Tab & Filter State
   const [activeTab, setActiveTab] = useState("Jaminan Pelaksanaan");
   const [searchTerm, setSearchTerm] = useState("");
-
-  // 🔥 STATE BARU: Filter Status
-  const [filterStatus, setFilterStatus] = useState("Semua"); // Semua, Aktif, Expired, Selesai
-
-  // Checkbox State
+  const [filterStatus, setFilterStatus] = useState("Semua");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
-  // API URL Config
   const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
-  // --- 3. HELPER: HITUNG STATUS REAL-TIME ---
-  // Fungsi ini menentukan status berdasarkan Tanggal, BUKAN database text semata.
+  // --- HELPER STATUS ---
   const getRealStatus = (letter: Letter) => {
-    // 1. Jika di database sudah ditandai "Selesai", maka statusnya Selesai (Override tanggal)
     if (letter.status?.toLowerCase() === "selesai") return "Selesai";
-
-    // 2. Cek Tanggal untuk Expired/Aktif
     const endDate = new Date(letter.tanggal_akhir_garansi);
     const isValidDate = !isNaN(endDate.getTime());
-
-    // Jika tanggal error, anggap aktif saja biar aman
     if (!isValidDate) return "Aktif";
-
     const diff = Math.ceil(
       (endDate.getTime() - new Date().getTime()) / (1000 * 3600 * 24),
     );
-
     if (diff <= 0) return "Expired";
     return "Aktif";
   };
 
-  // --- 4. FETCH DATA ---
-
+  // --- FETCH DATA ---
   const fetchData = useCallback(async () => {
     try {
-      // Fetch Surat
       const resLetters = await fetch(`${API_URL}/letters`);
       if (resLetters.ok) {
         const rawData = await resLetters.json();
-        const cleanData = rawData.filter(
-          (item: Letter) => item.id !== null && item.id !== undefined,
-        );
+        const cleanData = rawData.filter((item: Letter) => item.id !== null);
         setLetters(cleanData);
       }
 
-      // Fetch Logs
-      const resLogs = await fetch(`${API_URL}/logs`);
-      if (resLogs.ok) setLogs(await resLogs.json());
+      // Hanya Admin yang butuh fetch logs
+      if (isAdmin) {
+        const resLogs = await fetch(`${API_URL}/logs`);
+        if (resLogs.ok) setLogs(await resLogs.json());
+      }
     } catch (error) {
       console.error("Gagal mengambil data:", error);
       toast.error("Gagal terhubung ke server backend");
     }
-  }, [API_URL]);
+  }, [API_URL, isAdmin]);
 
-  // --- 5. LOGIKA SINKRONISASI CHART (USEMEMO) ---
-  // Kita hitung Chart DI SINI, berdasarkan data 'letters' yang sudah diambil.
-  // Jadi tabel dan chart pasti 100% sama datanya.
-
+  // --- CHART CALCULATION ---
   useMemo(() => {
     if (letters.length === 0) return;
 
@@ -174,31 +150,23 @@ export default function Dashboard() {
     const vendorStats: Record<string, number> = {};
 
     letters.forEach((l) => {
-      // Gunakan Helper Real Status agar konsisten dengan Tabel
       const realStatus = getRealStatus(l);
-
-      // Update Count
       statusCounts[realStatus] = (statusCounts[realStatus] || 0) + 1;
       if (realStatus === "Expired") countExpired++;
-
-      // Update Nominal
       totalNominal += Number(l.nominal_jaminan) || 0;
-
-      // Update Vendor Stats (Top 5)
       vendorStats[l.vendor] =
         (vendorStats[l.vendor] || 0) + Number(l.nominal_jaminan);
     });
 
-    // Format Data untuk Chart Component
     const pieData: PieChartItem[] = [
-      { name: "Aktif", value: statusCounts["Aktif"], color: "#10B981" }, // Hijau
-      { name: "Expired", value: statusCounts["Expired"], color: "#EF4444" }, // Merah
-      { name: "Selesai", value: statusCounts["Selesai"], color: "#3B82F6" }, // Biru
+      { name: "Aktif", value: statusCounts["Aktif"], color: "#10B981" },
+      { name: "Expired", value: statusCounts["Expired"], color: "#EF4444" },
+      { name: "Selesai", value: statusCounts["Selesai"], color: "#3B82F6" },
     ].filter((d) => d.value > 0);
 
     const barData: BarChartItem[] = Object.entries(vendorStats)
-      .sort(([, a], [, b]) => b - a) // Urutkan terbesar
-      .slice(0, 5) // Ambil 5 teratas
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
       .map(([name, total]) => ({ name: name.substring(0, 15) + "...", total }));
 
     setAnalyticsData({
@@ -212,6 +180,7 @@ export default function Dashboard() {
     });
   }, [letters]);
 
+  // --- INIT USER & ROLE ---
   useEffect(() => {
     const init = async () => {
       try {
@@ -223,12 +192,15 @@ export default function Dashboard() {
           return;
         }
         setUserEmail(user.email || "Unknown");
+
+        // Cek Role di Supabase
         const { data } = await supabase
           .from("profiles")
           .select("role")
           .eq("id", user.id)
           .single();
-        if (data?.role === "admin") setIsAdmin(true);
+        const userRole = data?.role === "admin";
+        setIsAdmin(userRole); // Set State Admin
 
         await fetchData();
         setIsPageLoading(false);
@@ -240,21 +212,13 @@ export default function Dashboard() {
     init();
   }, [router, fetchData]);
 
-  // --- 6. LOGIKA FILTERING UTAMA ---
-
+  // --- FILTERING ---
   const filteredLetters = letters.filter((l) => {
-    // 1. Filter Tab (Kategori)
     const categoryMatch = l.kategori?.toLowerCase() === activeTab.toLowerCase();
-
-    // 2. Filter Status (Aktif/Expired/Selesai)
-    // Kita gunakan getRealStatus agar logicnya SAMA PERSIS dengan warna tabel
     const currentStatus = getRealStatus(l);
     let statusMatch = true;
-    if (filterStatus !== "Semua") {
-      statusMatch = currentStatus === filterStatus;
-    }
+    if (filterStatus !== "Semua") statusMatch = currentStatus === filterStatus;
 
-    // 3. Filter Search
     const term = searchTerm.toLowerCase();
     const searchMatch =
       l.vendor.toLowerCase().includes(term) ||
@@ -265,88 +229,66 @@ export default function Dashboard() {
     return categoryMatch && statusMatch && searchMatch;
   });
 
-  // --- 7. LOGIKA CHECKBOX ---
-
+  // --- ACTIONS ---
   const toggleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.checked) {
-      const visibleIds = filteredLetters.map((l) => l.id);
-      setSelectedIds(visibleIds);
-    } else {
-      setSelectedIds([]);
-    }
+    if (e.target.checked) setSelectedIds(filteredLetters.map((l) => l.id));
+    else setSelectedIds([]);
   };
 
   const toggleSelectOne = (id: number) => {
-    if (selectedIds.includes(id)) {
+    if (selectedIds.includes(id))
       setSelectedIds((prev) => prev.filter((item) => item !== id));
-    } else {
-      setSelectedIds((prev) => [...prev, id]);
-    }
+    else setSelectedIds((prev) => [...prev, id]);
   };
 
-  // --- 8. ACTIONS ---
-
   const handleDelete = async (id: number) => {
-    if (!id) {
-      toast.error("Data korup (ID Kosong), tidak bisa dihapus.");
-      return;
-    }
-    if (!confirm("Yakin ingin menghapus data ini secara permanen?")) return;
-
+    if (!id || !confirm("Yakin hapus permanen?")) return;
     setProcessing(true);
     const toastId = toast.loading("Menghapus...");
-
     try {
       const res = await fetch(
         `${API_URL}/letters/${id}?user_email=${userEmail}`,
         { method: "DELETE" },
       );
-
       if (res.ok) {
         await fetchData();
-        toast.success("Data terhapus", { id: toastId });
+        toast.success("Terhapus", { id: toastId });
         setSelectedIds((prev) => prev.filter((item) => item !== id));
-      } else {
-        throw new Error("Gagal menghapus");
-      }
-    } catch (e) {
-      console.error(e);
-      toast.error("Gagal menghapus (Cek Server)", { id: toastId });
+      } else throw new Error();
+    } catch {
+      toast.error("Gagal hapus", { id: toastId });
     } finally {
       setProcessing(false);
     }
   };
 
   const handleBulkDelete = async () => {
-    if (selectedIds.length === 0) return;
-    if (!confirm(`Yakin hapus ${selectedIds.length} data terpilih?`)) return;
-
+    if (
+      selectedIds.length === 0 ||
+      !confirm(`Hapus ${selectedIds.length} data terpilih?`)
+    )
+      return;
     setProcessing(true);
     const toastId = toast.loading("Menghapus massal...");
-
     try {
-      const promises = selectedIds.map((id) =>
-        fetch(`${API_URL}/letters/${id}?user_email=${userEmail}`, {
-          method: "DELETE",
-        }),
+      await Promise.all(
+        selectedIds.map((id) =>
+          fetch(`${API_URL}/letters/${id}?user_email=${userEmail}`, {
+            method: "DELETE",
+          }),
+        ),
       );
-      await Promise.all(promises);
-
       await fetchData();
       setSelectedIds([]);
       toast.success("Berhasil dihapus!", { id: toastId });
-    } catch (e) {
-      console.error(e);
+    } catch {
       toast.error("Gagal hapus massal", { id: toastId });
     } finally {
       setProcessing(false);
     }
   };
 
-  const handleExport = () => {
-    window.open(`${API_URL}/export/excel`, "_blank");
-  };
-
+  const handleExport = () => window.open(`${API_URL}/export/excel`, "_blank");
   const formatRupiah = (num: number) =>
     new Intl.NumberFormat("id-ID", {
       style: "currency",
@@ -354,15 +296,10 @@ export default function Dashboard() {
       maximumFractionDigits: 0,
     }).format(num);
 
-  // --- 9. RENDER UI ---
-
   if (isPageLoading)
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 gap-4">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-        <p className="text-slate-600 font-medium animate-pulse">
-          Memuat Sistem...
-        </p>
       </div>
     );
 
@@ -414,18 +351,16 @@ export default function Dashboard() {
       </nav>
 
       <main className="max-w-7xl mx-auto p-6 space-y-8 mt-2">
-        {/* ANALYTICS CHARTS (Sekarang Sinkron!) */}
         {analyticsData ? (
           <AnalyticsCharts data={analyticsData} />
         ) : (
           <div className="p-8 text-center text-slate-400 bg-white rounded-3xl border border-slate-200 shadow-sm animate-pulse">
-            Sedang menghitung grafik real-time...
+            Sedang menghitung grafik...
           </div>
         )}
 
-        {/* --- CONTROLS SECTION --- */}
+        {/* CONTROLS */}
         <div className="flex flex-col lg:flex-row justify-between items-end gap-6">
-          {/* TAB SWITCHER */}
           <div className="bg-white p-1.5 rounded-2xl flex gap-1 border border-slate-200 shadow-sm w-full lg:w-auto overflow-x-auto">
             {["Jaminan Pelaksanaan", "Jaminan Pemeliharaan"].map((tab) => (
               <button
@@ -434,20 +369,14 @@ export default function Dashboard() {
                   setActiveTab(tab);
                   setSelectedIds([]);
                 }}
-                className={`px-6 py-3 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${
-                  activeTab === tab
-                    ? "bg-slate-900 text-white shadow-md"
-                    : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"
-                }`}
+                className={`px-6 py-3 rounded-xl text-sm font-bold transition-all whitespace-nowrap ${activeTab === tab ? "bg-slate-900 text-white shadow-md" : "text-slate-500 hover:bg-slate-50 hover:text-slate-900"}`}
               >
                 {tab}
               </button>
             ))}
           </div>
 
-          {/* SEARCH & FILTER TOOLS */}
           <div className="flex flex-wrap lg:flex-nowrap gap-3 w-full lg:w-auto">
-            {/* 🔥 FILTER DROPDOWN STATUS 🔥 */}
             <div className="relative w-full lg:w-48">
               <Filter
                 className="absolute left-4 top-3.5 text-slate-400 pointer-events-none"
@@ -463,13 +392,8 @@ export default function Dashboard() {
                 <option value="Expired">🚨 Hanya Expired</option>
                 <option value="Selesai">🏁 Selesai</option>
               </select>
-              {/* Panah Dropdown Custom */}
-              <div className="absolute right-4 top-4 pointer-events-none">
-                <div className="w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-t-[6px] border-t-slate-400"></div>
-              </div>
             </div>
 
-            {/* SEARCH BAR */}
             <div className="relative w-full lg:w-80">
               <Search
                 className="absolute left-4 top-3.5 text-slate-400"
@@ -484,7 +408,6 @@ export default function Dashboard() {
               />
             </div>
 
-            {/* EXPORT BUTTON */}
             <button
               onClick={handleExport}
               className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-600 hover:bg-emerald-100 transition-colors flex items-center justify-center gap-2 shadow-sm flex-1 lg:flex-none"
@@ -494,34 +417,39 @@ export default function Dashboard() {
               <span className="hidden xl:inline font-bold text-xs">EXCEL</span>
             </button>
 
-            {/* LOG BUTTON */}
-            <button
-              onClick={() => setShowLogs(true)}
-              className="p-3 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-blue-600 hover:border-blue-200 transition-colors shadow-sm flex-1 lg:flex-none flex justify-center"
-              title="Log Aktivitas"
-            >
-              <History size={20} />
-            </button>
+            {/* 🔥 HANYA ADMIN BISA LIHAT TOMBOL LOG */}
+            {isAdmin && (
+              <button
+                onClick={() => setShowLogs(true)}
+                className="p-3 bg-white border border-slate-200 rounded-xl text-slate-500 hover:text-blue-600 hover:border-blue-200 transition-colors shadow-sm flex-1 lg:flex-none flex justify-center"
+                title="Log Aktivitas"
+              >
+                <History size={20} />
+              </button>
+            )}
           </div>
         </div>
 
-        {/* --- MAIN TABLE --- */}
+        {/* MAIN TABLE */}
         <div className="bg-white rounded-[2rem] shadow-xl border border-slate-100 flex flex-col min-h-[500px] overflow-hidden">
           <div className="overflow-x-auto custom-scrollbar flex-1">
             <table className="w-full text-left relative">
               <thead className="sticky top-0 z-20 bg-slate-50 border-b border-slate-100 shadow-sm">
                 <tr className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
-                  <th className="px-6 py-5 w-14 text-center">
-                    <input
-                      type="checkbox"
-                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                      onChange={toggleSelectAll}
-                      checked={
-                        filteredLetters.length > 0 &&
-                        selectedIds.length === filteredLetters.length
-                      }
-                    />
-                  </th>
+                  {/* 🔥 HANYA ADMIN BISA LIHAT CHECKBOX */}
+                  {isAdmin && (
+                    <th className="px-6 py-5 w-14 text-center">
+                      <input
+                        type="checkbox"
+                        className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                        onChange={toggleSelectAll}
+                        checked={
+                          filteredLetters.length > 0 &&
+                          selectedIds.length === filteredLetters.length
+                        }
+                      />
+                    </th>
+                  )}
                   <th className="px-6 py-5">Vendor & Kontrak</th>
                   <th className="px-6 py-5">Nominal Jaminan</th>
                   <th className="px-6 py-5">Lokasi Fisik</th>
@@ -542,22 +470,18 @@ export default function Dashboard() {
                         )
                       : 999;
 
-                    // LOGIC WARNA (Sama persis dengan getRealStatus)
                     let statusColor =
                       "bg-emerald-100 text-emerald-700 border-emerald-200";
                     let statusLabel = "AKTIF";
                     let statusIcon = <Clock size={12} />;
 
-                    // Cek Override dari Database dulu
                     if (letter.status?.toLowerCase() === "selesai") {
                       statusColor = "bg-blue-100 text-blue-700 border-blue-200";
                       statusLabel = "SELESAI";
                       statusIcon = (
                         <div className="w-2 h-2 bg-blue-600 rounded-full" />
                       );
-                    }
-                    // Jika belum selesai, cek tanggal
-                    else if (diff <= 0) {
+                    } else if (diff <= 0) {
                       statusColor = "bg-red-50 text-red-600 border-red-200";
                       statusLabel = "EXPIRED";
                     } else if (diff <= 30) {
@@ -574,31 +498,28 @@ export default function Dashboard() {
                     return (
                       <tr
                         key={letter.id}
-                        className={`group transition-colors ${
-                          isSelected ? "bg-blue-50/60" : "hover:bg-slate-50/80"
-                        }`}
+                        className={`group transition-colors ${isSelected ? "bg-blue-50/60" : "hover:bg-slate-50/80"}`}
                       >
-                        {/* Checkbox */}
-                        <td className="px-6 py-4 text-center">
-                          <input
-                            type="checkbox"
-                            className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                            checked={isSelected}
-                            onChange={() => toggleSelectOne(letter.id)}
-                          />
-                        </td>
+                        {/* 🔥 HANYA ADMIN BISA LIHAT CHECKBOX */}
+                        {isAdmin && (
+                          <td className="px-6 py-4 text-center">
+                            <input
+                              type="checkbox"
+                              className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                              checked={isSelected}
+                              onChange={() => toggleSelectOne(letter.id)}
+                            />
+                          </td>
+                        )}
 
-                        {/* Vendor Info & No Kontrak */}
                         <td className="px-6 py-4">
                           <div className="font-bold text-slate-900 text-sm mb-1">
                             {letter.vendor}
                           </div>
-
                           <div className="flex items-center gap-1.5 text-xs text-slate-700 font-mono mb-2 bg-blue-50 border border-blue-100 px-2 py-1 rounded w-fit">
                             <FileText size={12} className="text-blue-500" />
                             {letter.nomor_kontrak}
                           </div>
-
                           <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium bg-slate-100 px-2 py-1 rounded-lg w-fit">
                             <Building2 size={12} /> {letter.bank_penerbit}
                           </div>
@@ -610,12 +531,10 @@ export default function Dashboard() {
                           </div>
                         </td>
 
-                        {/* Nominal */}
                         <td className="px-6 py-4 font-bold text-slate-700 text-sm">
                           {formatRupiah(letter.nominal_jaminan)}
                         </td>
 
-                        {/* Lokasi */}
                         <td className="px-6 py-4">
                           {letter.lokasi === "Arsip Lama" ? (
                             <span className="inline-flex items-center gap-1.5 text-[10px] font-bold text-white bg-slate-500 px-2.5 py-1 rounded-full shadow-sm">
@@ -631,7 +550,6 @@ export default function Dashboard() {
                           )}
                         </td>
 
-                        {/* Status */}
                         <td className="px-6 py-4">
                           <div
                             className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold border ${statusColor} mb-1.5`}
@@ -640,7 +558,6 @@ export default function Dashboard() {
                           </div>
                           <div className="text-[11px] text-slate-500 font-medium flex flex-col">
                             <span>Exp: {letter.tanggal_akhir_garansi}</span>
-                            {/* Hitung diff hanya jika belum Selesai dan belum Expired yang parah */}
                             {diff > 0 &&
                               diff <= 30 &&
                               statusLabel !== "SELESAI" && (
@@ -651,25 +568,31 @@ export default function Dashboard() {
                           </div>
                         </td>
 
-                        {/* Aksi */}
+                        {/* 🔥 TOMBOL AKSI DISESUAIKAN ROLE */}
                         <td className="px-6 py-4">
                           <div className="flex justify-center gap-2 opacity-100">
-                            <Link
-                              href={`/dashboard/input?id=${letter.id}`}
-                              className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-600 hover:text-white rounded-xl transition-all border border-blue-100"
-                              title="Edit Data"
-                            >
-                              <Edit size={16} />
-                            </Link>
+                            {/* Admin Only: Edit */}
+                            {isAdmin && (
+                              <Link
+                                href={`/dashboard/input?id=${letter.id}`}
+                                className="p-2 text-blue-600 bg-blue-50 hover:bg-blue-600 hover:text-white rounded-xl transition-all border border-blue-100"
+                                title="Edit Data"
+                              >
+                                <Edit size={16} />
+                              </Link>
+                            )}
 
-                            <button
-                              onClick={() => handleDelete(letter.id)}
-                              className="p-2 text-red-500 bg-red-50 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100"
-                              title="Hapus"
-                              disabled={processing}
-                            >
-                              <Trash2 size={16} />
-                            </button>
+                            {/* Admin Only: Delete */}
+                            {isAdmin && (
+                              <button
+                                onClick={() => handleDelete(letter.id)}
+                                className="p-2 text-red-500 bg-red-50 hover:bg-red-500 hover:text-white rounded-xl transition-all border border-red-100"
+                                title="Hapus"
+                                disabled={processing}
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            )}
 
                             <button
                               onClick={() => setShowQR(letter)}
@@ -697,17 +620,13 @@ export default function Dashboard() {
                   })
                 ) : (
                   <tr>
-                    <td colSpan={6} className="text-center py-24">
+                    <td colSpan={isAdmin ? 6 : 5} className="text-center py-24">
                       <div className="flex flex-col items-center justify-center text-slate-300">
                         <div className="bg-slate-50 p-4 rounded-full mb-4">
                           <Search size={32} className="opacity-50" />
                         </div>
                         <p className="text-lg font-bold text-slate-400">
                           Tidak ada data ditemukan
-                        </p>
-                        <p className="text-xs max-w-xs mx-auto mt-2">
-                          Coba ubah filter <strong>{filterStatus}</strong> atau
-                          kategori <strong>{activeTab}</strong>.
                         </p>
                       </div>
                     </td>
@@ -718,65 +637,66 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* --- BULK ACTION BAR --- */}
-        <AnimatePresence>
-          {selectedIds.length > 0 && (
-            <motion.div
-              initial={{ y: 100, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 100, opacity: 0 }}
-              className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white shadow-2xl rounded-full px-8 py-4 flex items-center gap-6 z-50 border border-slate-700"
-            >
-              <div className="flex items-center gap-3">
-                <div className="bg-white text-slate-900 w-8 h-8 rounded-full flex items-center justify-center text-sm font-black border-2 border-slate-200">
-                  {selectedIds.length}
+        {/* 🔥 HANYA ADMIN BISA LIHAT BULK DELETE & TOMBOL TAMBAH */}
+        {isAdmin && (
+          <AnimatePresence>
+            {selectedIds.length > 0 && (
+              <motion.div
+                initial={{ y: 100, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 100, opacity: 0 }}
+                className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white shadow-2xl rounded-full px-8 py-4 flex items-center gap-6 z-50 border border-slate-700"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="bg-white text-slate-900 w-8 h-8 rounded-full flex items-center justify-center text-sm font-black border-2 border-slate-200">
+                    {selectedIds.length}
+                  </div>
+                  <span className="text-sm font-bold tracking-wide">
+                    Data Terpilih
+                  </span>
                 </div>
-                <span className="text-sm font-bold tracking-wide">
-                  Data Terpilih
-                </span>
-              </div>
+                <div className="h-8 w-px bg-slate-700"></div>
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={processing}
+                  className="text-red-400 hover:text-red-300 font-bold text-sm flex items-center gap-2 transition-colors disabled:opacity-50"
+                >
+                  {processing ? (
+                    <span className="animate-pulse">Memproses...</span>
+                  ) : (
+                    <>
+                      <Trash2 size={18} /> Hapus Masal
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={() => setSelectedIds([])}
+                  className="text-slate-500 hover:text-white transition-colors ml-2 bg-slate-800 p-1 rounded-full"
+                >
+                  <X size={16} />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        )}
 
-              <div className="h-8 w-px bg-slate-700"></div>
-
-              <button
-                onClick={handleBulkDelete}
-                disabled={processing}
-                className="text-red-400 hover:text-red-300 font-bold text-sm flex items-center gap-2 transition-colors disabled:opacity-50"
-              >
-                {processing ? (
-                  <span className="animate-pulse">Memproses...</span>
-                ) : (
-                  <>
-                    <Trash2 size={18} /> Hapus Masal
-                  </>
-                )}
-              </button>
-
-              <button
-                onClick={() => setSelectedIds([])}
-                className="text-slate-500 hover:text-white transition-colors ml-2 bg-slate-800 p-1 rounded-full"
-              >
-                <X size={16} />
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Floating Action Button */}
-        <Link href="/dashboard/input">
-          <button
-            className="fixed bottom-8 right-8 bg-blue-600 text-white p-5 rounded-full shadow-[0_10px_40px_-10px_rgba(37,99,235,0.5)] hover:scale-110 hover:bg-blue-700 transition-all z-40 group flex items-center justify-center border-4 border-white/20 backdrop-blur-sm"
-            title="Tambah Data Baru"
-          >
-            <Plus
-              size={32}
-              className="group-hover:rotate-90 transition-transform duration-300"
-            />
-          </button>
-        </Link>
+        {/* Floating Action Button (Admin Only) */}
+        {isAdmin && (
+          <Link href="/dashboard/input">
+            <button
+              className="fixed bottom-8 right-8 bg-blue-600 text-white p-5 rounded-full shadow-[0_10px_40px_-10px_rgba(37,99,235,0.5)] hover:scale-110 hover:bg-blue-700 transition-all z-40 group flex items-center justify-center border-4 border-white/20 backdrop-blur-sm"
+              title="Tambah Data Baru"
+            >
+              <Plus
+                size={32}
+                className="group-hover:rotate-90 transition-transform duration-300"
+              />
+            </button>
+          </Link>
+        )}
       </main>
 
-      {/* --- MODAL QR CODE --- */}
+      {/* MODAL QR CODE (SEMUA BISA LIHAT) */}
       <AnimatePresence>
         {showQR && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 print:bg-white print:p-0">
@@ -791,7 +711,6 @@ export default function Dashboard() {
                   __html: ` @media print { body * { visibility: hidden; } .shopee-label, .shopee-label * { visibility: visible; } .shopee-label { position: fixed; left: 0; top: 0; width: 70mm !important; height: 100mm !important; padding: 10mm; display: flex; flex-direction: column; align-items: center; justify-content: center; background: white !important; } @page { size: 70mm 100mm; margin: 0; } .no-print { display: none !important; } } `,
                 }}
               />
-
               <div className="shopee-label flex flex-col items-center w-full border-2 border-slate-100 p-6 rounded-[24px] print:border-0 bg-slate-50/50">
                 <div className="text-center mb-6">
                   <h3 className="font-black text-2xl text-slate-900 leading-tight tracking-tight">
@@ -847,9 +766,9 @@ export default function Dashboard() {
         )}
       </AnimatePresence>
 
-      {/* --- MODAL LOGS --- */}
+      {/* MODAL LOGS (HANYA ADMIN) */}
       <AnimatePresence>
-        {showLogs && (
+        {showLogs && isAdmin && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4">
             <motion.div
               initial={{ opacity: 0, y: 50 }}
@@ -878,11 +797,7 @@ export default function Dashboard() {
                     >
                       <div className="flex justify-between items-start mb-1">
                         <span
-                          className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${
-                            log.action === "DELETE"
-                              ? "bg-red-100 text-red-600"
-                              : "bg-blue-100 text-blue-600"
-                          }`}
+                          className={`text-[10px] font-black px-2 py-0.5 rounded uppercase ${log.action === "DELETE" ? "bg-red-100 text-red-600" : "bg-blue-100 text-blue-600"}`}
                         >
                           {log.action}
                         </span>
