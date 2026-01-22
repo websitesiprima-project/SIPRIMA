@@ -70,7 +70,7 @@ export default function PortalGateway() {
         </a>
 
         {/* KARTU 2: SIJAGAD (Updated Link) */}
-        <a href="https://sijagad.vercel.app/" className="group">
+        <a href="https://siprima-two.vercel.app/" className="group">
           <motion.div
             whileHover={{ y: -5 }}
             className="h-full bg-white rounded-3xl p-8 border border-orange-100 shadow-xl shadow-orange-900/5 hover:shadow-orange-500/20 transition-all relative overflow-hidden group-hover:border-orange-300"
