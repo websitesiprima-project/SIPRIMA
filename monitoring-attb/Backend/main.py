@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 
 # --- 1. SETUP ENVIRONMENT & KONEKSI ---
-env_path = Path(__file__).resolve().parent.parent / '.env.local'
+env_path = Path(__file__).resolve().parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
 url: str = os.environ.get("NEXT_PUBLIC_SUPABASE_URL") or ""
