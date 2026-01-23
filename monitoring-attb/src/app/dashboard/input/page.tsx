@@ -85,7 +85,7 @@ export default function InputAssetPage() {
   const handleChange = (
     e: React.ChangeEvent<
       HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-    >
+    >,
   ) => {
     const { name, value } = e.target;
 
@@ -186,7 +186,7 @@ export default function InputAssetPage() {
           // Handle validasi Pydantic
           if (errJson.detail && Array.isArray(errJson.detail)) {
             throw new Error(
-              `Validasi Gagal: ${errJson.detail[0].loc[1]} - ${errJson.detail[0].msg}`
+              `Validasi Gagal: ${errJson.detail[0].loc[1]} - ${errJson.detail[0].msg}`,
             );
           }
           throw new Error(errJson.detail || "Gagal menyimpan data");

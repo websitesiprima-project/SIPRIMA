@@ -1,57 +1,49 @@
 "use client";
 
 import {
-  ClipboardList, // Inventarisasi
-  FileCheck, // Penetapan UPI
-  ShieldAlert, // Review SPI
-  Building, // Kantor Pusat
-  Gavel, // Dekom/RUPS
-  Trash2, // Penghapusan
+  ClipboardList, // AE-1
+  FileCheck, // AE-2
+  FileText, // AE-3
+  ShieldAlert, // AE-4
+  CheckCircle, // Selesai
 } from "lucide-react";
 
-// ALUR SESUAI DOKUMEN AKUNTANSI ASET TETAP (HAL 47-51)
+// ALUR SESUAI SURAT KDIV AKT No. 1624/KEU.02.03/DIVAKT/2015
 const steps = [
   {
     id: 1,
-    label: "Inventarisasi UP",
+    label: "BA Hasil Penelitian",
     icon: ClipboardList,
-    desc: "Penelitian Tim UP (AE 1) & Usulan (AE 3)",
+    desc: "Berita Acara & Penarikan",
     code: "AE-1",
   },
   {
     id: 2,
-    label: "Penetapan UPI",
+    label: "Penetapan Penarikan",
     icon: FileCheck,
-    desc: "Verifikasi Unit Induk (AE 2) -> Status ATTB",
+    desc: "Penetapan Aset Ditarik",
     code: "AE-2",
   },
   {
     id: 3,
-    label: "Review SPI",
-    icon: ShieldAlert,
-    desc: "Pemeriksaan Fisik & Dokumen (AE 4)",
-    code: "AE-4",
+    label: "Usulan Penarikan",
+    icon: FileText,
+    desc: "Usulan Penghapusan",
+    code: "AE-3",
   },
   {
     id: 4,
-    label: "Verifikasi Pusat",
-    icon: Building,
-    desc: "Div. Akuntansi & Kajian Finansial/Hukum",
-    code: "DIV-AKT",
+    label: "BA Penelitian",
+    icon: ShieldAlert,
+    desc: "Berita Acara Penelitian",
+    code: "AE-4",
   },
   {
     id: 5,
-    label: "Persetujuan",
-    icon: Gavel,
-    desc: "SK Direksi / Dekom / RUPS (Kementerian BUMN)",
-    code: "SK-DIR",
-  },
-  {
-    id: 6,
-    label: "Penghapusan",
-    icon: Trash2,
-    desc: "Eksekusi Penghapusbukuan (AE 5)",
-    code: "AE-5",
+    label: "Selesai",
+    icon: CheckCircle,
+    desc: "Proses Penghapusan Tuntas",
+    code: "SELESAI",
   },
 ];
 
@@ -91,15 +83,15 @@ export default function StatusTracker({
                     isCompleted
                       ? "bg-pln-primary border-pln-primary text-white shadow-md"
                       : isCurrent
-                      ? "bg-white border-pln-gold text-pln-gold scale-125 shadow-xl shadow-pln-gold/20"
-                      : "bg-white border-gray-200 text-gray-300"
+                        ? "bg-white border-pln-gold text-pln-gold scale-125 shadow-xl shadow-pln-gold/20"
+                        : "bg-white border-gray-200 text-gray-300"
                   }`}
               >
                 <Icon size={isCurrent ? 20 : 18} strokeWidth={2.5} />
               </div>
 
               {/* Label & Deskripsi */}
-              <div className="mt-4 text-center max-w-[120px]">
+              <div className="mt-4 text-center max-w-[140px]">
                 {/* Kode Dokumen (Badge) */}
                 <span
                   className={`text-[10px] font-mono px-2 py-0.5 rounded-full mb-1 inline-block border
@@ -107,8 +99,8 @@ export default function StatusTracker({
                     isCompleted
                       ? "bg-green-50 text-green-600 border-green-200"
                       : isCurrent
-                      ? "bg-yellow-50 text-yellow-600 border-yellow-200"
-                      : "bg-gray-50 text-gray-400 border-gray-100"
+                        ? "bg-yellow-50 text-yellow-600 border-yellow-200"
+                        : "bg-gray-50 text-gray-400 border-gray-100"
                   }`}
                 >
                   {step.code}
