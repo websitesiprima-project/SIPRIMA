@@ -2,17 +2,18 @@
 
 import { useState, useEffect } from "react";
 import { supabase } from "../../../lib/supabaseClient";
-import { Save, Calculator } from "lucide-react";
+import { Save, Calculator, FileText, ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "react-hot-toast";
+import Link from "next/link";
 
-// --- DATA KATEGORI (DROPDOWN) - UPDATED SESUAI PERALATAN PLN ---
+// --- DATA KATEGORI ---
 const assetCategories = [
   { label: "Trafo Tenaga (Power Transformer)", value: "Trafo Tenaga" },
   { label: "PMT (Pemutus Tenaga / Circuit Breaker)", value: "PMT" },
   { label: "PMS (Pemisah / Disconnector)", value: "PMS" },
   {
-    label: "CT / PT (Instrument Transformer)",
+    label: "Instrument Transformer (CT / PT)",
     value: "Instrument Transformer",
   },
   { label: "Lightning Arrester (LA)", value: "Lightning Arrester" },
@@ -37,9 +38,10 @@ export default function InputAssetPage() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [verifying, setVerifying] = useState(true);
 
-  // State Data Form
+  // --- STATE FORM (Termasuk no_surat_ae1) ---
   const [formData, setFormData] = useState({
     no_aset: "",
+    no_surat_ae1: "", // WAJIB UNTUK FORM AE-1
     jenis_aset: assetCategories[0].value,
     merk_type: "",
     spesifikasi: "",
@@ -56,7 +58,6 @@ export default function InputAssetPage() {
     keterangan: "",
   });
 
-  // State Khusus Input Manual
   const [manualJenis, setManualJenis] = useState("");
 
   // --- PROTEKSI HALAMAN ---
@@ -65,7 +66,6 @@ export default function InputAssetPage() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      // Logic Admin Sederhana (Sesuaikan dengan rule Anda)
       if (!user) {
         router.replace("/");
       } else {
@@ -75,13 +75,13 @@ export default function InputAssetPage() {
     checkAccess();
   }, [router]);
 
-  // --- AUTO-CALCULATE ---
+  // --- AUTO-CALCULATE TAFSIRAN ---
   useEffect(() => {
     const tafsiran = formData.konversi_kg * formData.rupiah_per_kg;
     setFormData((prev) => ({ ...prev, harga_tafsiran: tafsiran }));
   }, [formData.konversi_kg, formData.rupiah_per_kg]);
 
-  // --- HANDLE INPUT CHANGE ---
+  // --- HANDLE CHANGE ---
   const handleChange = (
     e: React.ChangeEvent<
       HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
@@ -94,8 +94,10 @@ export default function InputAssetPage() {
       return;
     }
 
+    // Daftar field string (termasuk no_surat_ae1)
     const stringFields = [
       "no_aset",
+      "no_surat_ae1",
       "merk_type",
       "spesifikasi",
       "satuan",
@@ -128,18 +130,23 @@ export default function InputAssetPage() {
     }
   };
 
-  // --- SUBMIT FUNCTION (FIXED) ---
+  // --- SUBMIT (CREATE AE-1) ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!formData.no_surat_ae1.trim()) {
+      toast.error("Nomor Surat AE-1 Wajib Diisi!");
+      return;
+    }
+
     setLoading(true);
     try {
-      // 1. Cek User ID
       const {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user?.id) throw new Error("Sesi login berakhir. Refresh halaman.");
 
-      // 2. Upload Foto
+      // 1. Upload Foto
       let foto_url = "";
       if (imageFile) {
         const fileName = `${Date.now()}-${imageFile.name.replace(/\s+/g, "-")}`;
@@ -147,56 +154,43 @@ export default function InputAssetPage() {
           .from("attb-photos")
           .upload(fileName, imageFile);
         if (error) throw new Error("Gagal upload foto: " + error.message);
-
         const { data } = supabase.storage
           .from("attb-photos")
           .getPublicUrl(fileName);
         foto_url = data.publicUrl;
       }
 
-      // 3. Gabung Spesifikasi
+      // 2. Gabung Spesifikasi
       const combinedSpesifikasi = manualJenis
         ? `[KODE: ${manualJenis}] \n${formData.spesifikasi}`
         : formData.spesifikasi;
 
-      // 4. Payload Final (Sesuai Backend)
+      // 3. Payload (Sesuai Struktur Database Baru)
       const payload = {
         ...formData,
         spesifikasi: combinedSpesifikasi,
         foto_url: foto_url || null,
-        status: "Draft",
-        current_step: 1,
+
+        // --- DATA PENTING UNTUK ALUR BARU ---
+        status: "Tahap 1: BA Hasil Penelitian (AE-1)", // Label Status
+        current_step: 1, // Step 1
+        // no_surat_ae1 sudah ada di dalam formData (spread operator di atas)
+
         input_by: user.id,
       };
 
       console.log("Sending Payload:", payload);
 
-      const response = await fetch("http://localhost:8000/api/assets/input", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      // --- PERUBAHAN UTAMA: INSERT LANGSUNG KE SUPABASE ---
+      const { error: insertError } = await supabase
+        .from("attb_assets")
+        .insert([payload]);
 
-      // 5. Error Handling Detail
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error("Server Error Raw:", errorText);
-        try {
-          const errJson = JSON.parse(errorText);
-          // Handle validasi Pydantic
-          if (errJson.detail && Array.isArray(errJson.detail)) {
-            throw new Error(
-              `Validasi Gagal: ${errJson.detail[0].loc[1]} - ${errJson.detail[0].msg}`,
-            );
-          }
-          throw new Error(errJson.detail || "Gagal menyimpan data");
-        } catch (parseError) {
-          // FIX: Gunakan variabel error yang berbeda agar tidak conflict
-          throw new Error(`Server Error: ${errorText} (${parseError})`);
-        }
+      if (insertError) {
+        throw new Error(insertError.message);
       }
 
-      toast.success("Sukses! Data aset berhasil disimpan.");
+      toast.success("Berhasil! Dokumen AE-1 Tersimpan.");
       router.push("/dashboard/tracking");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Error Unknown";
@@ -215,29 +209,66 @@ export default function InputAssetPage() {
 
   return (
     <div className="max-w-6xl mx-auto pb-10">
+      <Link
+        href="/dashboard"
+        className="flex items-center gap-2 text-gray-500 hover:text-pln-primary mb-4 text-sm font-bold w-fit"
+      >
+        <ArrowLeft size={16} /> Kembali ke Dashboard
+      </Link>
+
       <h1 className="text-2xl font-bold text-pln-primary mb-6">
-        Input Usulan ATTB
+        Input Usulan ATTB (Form AE-1)
       </h1>
 
       <form onSubmit={handleSubmit} className="space-y-8">
-        {/* KARTU 1: IDENTITAS */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">
-            1. Identitas Aset
+        {/* KARTU 1: ADMINISTRASI (FORM AE-1) */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-pln-primary">
+          <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2">
+            <FileText size={20} className="text-pln-primary" /> 1. Dokumen
+            Berita Acara (AE-1)
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* NO SURAT AE-1 (WAJIB) */}
             <div className="space-y-2">
-              <label className="text-xs font-bold text-gray-500 uppercase">
-                No. Aset (SAP)
+              <label className="text-sm font-bold text-gray-700 uppercase">
+                No. Surat AE-1 (BA Hasil Penelitian){" "}
+                <span className="text-red-500">*</span>
+              </label>
+              <input
+                required
+                name="no_surat_ae1"
+                type="text"
+                onChange={handleChange}
+                className="w-full p-3 bg-blue-50 border border-blue-200 rounded-lg focus:ring-2 focus:ring-pln-primary outline-none font-medium text-gray-800"
+                placeholder="Contoh: 001/BA-HP/2026"
+              />
+              <p className="text-[10px] text-gray-500">
+                *Nomor Berita Acara Hasil Penelitian & Penarikan Aset
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-bold text-gray-700 uppercase">
+                No. Aset (SAP) <span className="text-red-500">*</span>
               </label>
               <input
                 required
                 name="no_aset"
                 type="text"
                 onChange={handleChange}
-                className="w-full p-3 bg-gray-50 border rounded-lg"
+                className="w-full p-3 bg-white border border-gray-300 rounded-lg"
+                placeholder="Contoh: 100029384"
               />
             </div>
+          </div>
+        </div>
+
+        {/* KARTU 2: IDENTITAS FISIK */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">
+            2. Identitas Fisik Aset
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase">
                 Kategori
@@ -245,7 +276,7 @@ export default function InputAssetPage() {
               <select
                 name="jenis_aset"
                 onChange={handleChange}
-                className="w-full p-3 bg-blue-50 border border-blue-200 rounded-lg"
+                className="w-full p-3 bg-gray-50 border rounded-lg"
               >
                 {assetCategories.map((c) => (
                   <option key={c.value} value={c.value}>
@@ -254,19 +285,20 @@ export default function InputAssetPage() {
                 ))}
               </select>
             </div>
+
             <div className="space-y-2">
               <label className="text-xs font-bold text-red-600 uppercase">
-                Kode Teknis / Manual
+                Kode Teknis / Manual (Opsional)
               </label>
               <input
-                required
                 name="manual_jenis_aset"
                 type="text"
                 onChange={handleChange}
                 className="w-full p-3 bg-white border border-red-200 rounded-lg"
               />
             </div>
-            <div className="space-y-2">
+
+            <div className="space-y-2 md:col-span-2">
               <label className="text-xs font-bold text-gray-500 uppercase">
                 Merk / Type
               </label>
@@ -278,6 +310,7 @@ export default function InputAssetPage() {
                 className="w-full p-3 bg-white border rounded-lg"
               />
             </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-xs font-bold text-gray-500 uppercase">
@@ -307,6 +340,7 @@ export default function InputAssetPage() {
                 />
               </div>
             </div>
+
             <div className="md:col-span-2 space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase">
                 Spesifikasi Detail
@@ -321,10 +355,10 @@ export default function InputAssetPage() {
           </div>
         </div>
 
-        {/* KARTU 2: NILAI */}
+        {/* KARTU 3: NILAI & TAFSIRAN */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">
-            2. Nilai & Tafsiran
+            3. Nilai & Tafsiran
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <div className="space-y-2">
@@ -374,7 +408,9 @@ export default function InputAssetPage() {
                 className="w-full p-3 bg-gray-50 border rounded-lg font-bold"
               />
             </div>
+
             <div className="md:col-span-4 my-2 border-t border-dashed border-gray-200"></div>
+
             <div className="space-y-2">
               <label className="text-xs font-bold text-blue-600 uppercase">
                 Berat (Kg)
@@ -411,10 +447,10 @@ export default function InputAssetPage() {
           </div>
         </div>
 
-        {/* KARTU 3: LOKASI & FOTO */}
+        {/* KARTU 4: DOKUMENTASI */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">
-            3. Fisik & Dokumentasi
+            4. Lokasi & Foto
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="space-y-2">
@@ -442,7 +478,7 @@ export default function InputAssetPage() {
             </div>
             <div className="space-y-2 md:col-span-2">
               <label className="text-xs font-bold text-gray-500 uppercase">
-                Foto
+                Upload Foto
               </label>
               <input
                 type="file"
@@ -465,13 +501,13 @@ export default function InputAssetPage() {
           <button
             type="submit"
             disabled={loading}
-            className="bg-pln-primary text-white px-8 py-3 rounded-xl font-bold shadow-lg flex items-center gap-2"
+            className="bg-pln-primary text-white px-8 py-3 rounded-xl font-bold shadow-lg flex items-center gap-2 hover:bg-pln-primary/90 transition-colors"
           >
             {loading ? (
               "Menyimpan..."
             ) : (
               <>
-                <Save size={20} /> Simpan Data
+                <Save size={20} /> Simpan Data (AE-1)
               </>
             )}
           </button>
