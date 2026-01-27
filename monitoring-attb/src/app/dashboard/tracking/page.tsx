@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import Image from "next/image"; // OPTIMASI GAMBAR
 import AssetHistory from "../../../components/AssetHistory";
 import { supabase } from "../../../lib/supabaseClient";
 import StatusTracker from "../../../components/StatusTracker";
@@ -11,6 +10,7 @@ import {
   Loader2,
   Edit,
   Activity,
+  Image as ImageIcon,
   Maximize2,
   Package,
   Trash2,
@@ -21,7 +21,6 @@ import {
   X,
   BookOpen,
   CheckCircle,
-  ImageIcon,
 } from "lucide-react";
 import { toast } from "react-hot-toast";
 import { PDFDownloadLink } from "@react-pdf/renderer";
@@ -30,7 +29,7 @@ import ExcelJS from "exceljs";
 import { saveAs } from "file-saver";
 import dynamic from "next/dynamic";
 
-// --- LAZY LOAD CHART DENGAN SKELETON (MENCEGAH CLS) ---
+// --- LAZY LOAD CHART ---
 const DistributionChart = dynamic(
   () =>
     import("../../../components/DashboardCharts").then(
@@ -39,9 +38,7 @@ const DistributionChart = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="h-full w-full bg-gray-100 animate-pulse rounded-lg flex items-center justify-center text-xs text-gray-400">
-        Memuat Grafik...
-      </div>
+      <div className="h-full w-full bg-gray-100 animate-pulse rounded-lg" />
     ),
   },
 );
@@ -54,13 +51,12 @@ const CompositionChart = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="h-full w-full bg-gray-100 animate-pulse rounded-full flex items-center justify-center text-xs text-gray-400">
-        Memuat...
-      </div>
+      <div className="h-full w-full bg-gray-100 animate-pulse rounded-full" />
     ),
   },
 );
 
+// KATEGORI ASET (Sekarang akan dipakai di form Edit)
 const ASSET_CATEGORIES = [
   "Trafo Tenaga (Power Transformer)",
   "PMT (Pemutus Tenaga / Circuit Breaker)",
@@ -107,7 +103,6 @@ const STATUS_OPTIONS = [
   },
 ];
 
-// Interface Data (Tetap sama)
 interface AssetData {
   id: string;
   no_aset: string;
@@ -191,7 +186,6 @@ export default function TrackingPage() {
       const typedData = (data || []) as AssetData[];
       setAssets(typedData);
 
-      // Logika Grafik
       const stepCounts = [0, 0, 0, 0, 0];
       typedData.forEach((item) => {
         const step = item.current_step || 1;
@@ -220,7 +214,6 @@ export default function TrackingPage() {
 
       setLoading(false);
 
-      // Kembalikan seleksi jika ada
       const currentSelectedId = selectedAssetIdRef.current;
       if (currentSelectedId) {
         const updated = typedData.find((a) => a.id === currentSelectedId);
@@ -325,12 +318,12 @@ export default function TrackingPage() {
         .delete()
         .eq("id", selectedAsset.id);
       if (error) throw error;
-      toast.success("Aset dihapus");
+      toast.success("Aset berhasil dihapus");
       setSelectedAsset(null);
       fetchData();
     } catch (error) {
       console.error(error);
-      toast.error("Gagal hapus");
+      toast.error("Gagal menghapus aset");
     } finally {
       setUpdating(false);
     }
@@ -362,7 +355,6 @@ export default function TrackingPage() {
     }
   };
 
-  // EXPORT EXCEL LOGIC (Sama seperti sebelumnya, dipercepat)
   const handleExportExcel = async () => {
     try {
       setUpdating(true);
@@ -436,10 +428,13 @@ export default function TrackingPage() {
               });
               row.height = 100;
               const rowIndex = currentRowNum - 1;
+
+              // FIX 1: Gunakan 'as any' untuk menenangkan TypeScript soal tipe Anchor ExcelJS
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const anchorTL = { col: 19.1, row: rowIndex + 0.1 } as any;
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               const anchorBR = { col: 19.9, row: rowIndex + 0.9 } as any;
+
               worksheet.addImage(imageId, {
                 tl: anchorTL,
                 br: anchorBR,
@@ -493,26 +488,118 @@ export default function TrackingPage() {
               </h3>
               <button
                 onClick={() => setGuideModalOpen(false)}
-                aria-label="Tutup Panduan"
                 className="p-2 hover:bg-gray-200 rounded-full"
               >
                 <X size={20} />
               </button>
             </div>
+
             <div className="flex-1 overflow-y-auto p-6 space-y-6 text-sm text-gray-700 custom-scrollbar">
-              {/* Isi Panduan (Sama seperti sebelumnya) */}
               <section>
                 <h4 className="font-bold text-base mb-2 border-b pb-1 text-gray-800">
                   1. Pengertian & Syarat Penarikan
                 </h4>
                 <p className="mb-2">
-                  <strong>ATTB</strong> adalah aset yang diperoleh tetapi tidak
-                  lagi digunakan dalam operasi normal perusahaan.
+                  <strong>ATTB (Aset Tetap Tidak Beroperasi)</strong> adalah
+                  aset yang diperoleh tetapi tidak lagi digunakan dalam operasi
+                  normal perusahaan.
                 </p>
-                {/* ... konten panduan lainnya ... */}
+                <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 text-xs">
+                  <strong>Syarat Penarikan:</strong>
+                  <ul className="list-disc pl-4 mt-1 space-y-1">
+                    <li>Kondisi fisik rusak dan tidak ekonomis diperbaiki.</li>
+                    <li>Penggantian teknologi / usang.</li>
+                    <li>Relokasi aset.</li>
+                    <li>Material kadaluwarsa / expired.</li>
+                  </ul>
+                </div>
               </section>
-              {/* ... bagian lain ... */}
+
+              <section>
+                <h4 className="font-bold text-base mb-3 border-b pb-1 text-gray-800">
+                  2. Alur Proses Penghapusan (SOP)
+                </h4>
+                <div className="space-y-4">
+                  <div className="flex gap-3">
+                    <div className="flex-none w-8 h-8 rounded-full bg-pln-primary text-white flex items-center justify-center font-bold text-xs">
+                      1
+                    </div>
+                    <div>
+                      <p className="font-bold">Inventarisasi UP (AE-1)</p>
+                      <p className="text-xs text-gray-500">
+                        Tim UP meneliti aset rusak. Output:{" "}
+                        <strong>Berita Acara (AE-1)</strong>.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="flex-none w-8 h-8 rounded-full bg-pln-primary text-white flex items-center justify-center font-bold text-xs">
+                      2
+                    </div>
+                    <div>
+                      <p className="font-bold">Penetapan UPI (AE-2)</p>
+                      <p className="text-xs text-gray-500">
+                        Tim UPI memverifikasi usulan. Output:{" "}
+                        <strong>Penetapan Penarikan (AE-2)</strong>. Aset resmi
+                        jadi ATTB.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="flex-none w-8 h-8 rounded-full bg-pln-primary text-white flex items-center justify-center font-bold text-xs">
+                      3
+                    </div>
+                    <div>
+                      <p className="font-bold">Usulan Penarikan (AE-3)</p>
+                      <p className="text-xs text-gray-500">
+                        Tim UPI mengajukan usulan ke SPI untuk audit kelayakan.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="flex-none w-8 h-8 rounded-full bg-pln-primary text-white flex items-center justify-center font-bold text-xs">
+                      4
+                    </div>
+                    <div>
+                      <p className="font-bold">
+                        Review SPI & BA Penelitian (AE-4)
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Penelitian bersama Tim UPI & SPI. Output:{" "}
+                        <strong>AE-4</strong>.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="flex-none w-8 h-8 rounded-full bg-green-600 text-white flex items-center justify-center font-bold text-xs">
+                      <CheckCircle size={14} />
+                    </div>
+                    <div>
+                      <p className="font-bold text-green-700">
+                        Verifikasi Pusat & SK Penghapusan
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Div. Akuntansi memproses SK Direksi / Persetujuan Dekom
+                        / RUPS. Setelah SK terbit, aset dihapus (Write-off).
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section>
+                <h4 className="font-bold text-base mb-2 border-b pb-1 text-gray-800">
+                  3. Kelengkapan Dokumen
+                </h4>
+                <ul className="list-disc pl-4 text-xs space-y-1">
+                  <li>AE 1.1 / AE 2.1 / AE 4.1 (Lampiran Rincian Aset)</li>
+                  <li>Foto Fisik Aset Terbaru</li>
+                  <li>Kajian Teknis & Finansial</li>
+                  <li>Pakta Integritas General Manager</li>
+                </ul>
+              </section>
             </div>
+
             <div className="p-4 border-t bg-gray-50 text-right">
               <button
                 onClick={() => setGuideModalOpen(false)}
@@ -529,25 +616,49 @@ export default function TrackingPage() {
       {isStatusModalOpen && pendingStep && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 border-t-4 border-pln-primary">
-            {/* ... Isi Modal Input Surat (Sama seperti sebelumnya) ... */}
             <div className="flex items-center gap-3 mb-4 text-pln-primary">
               <div className="p-2 bg-blue-50 rounded-full">
                 <FileText size={24} />
               </div>
               <div>
                 <h3 className="font-bold text-lg">Input Nomor Surat</h3>
-                <p className="text-xs text-gray-500">Sesuai SOP</p>
+                <p className="text-xs text-gray-500">
+                  Sesuai Surat KDIV AKT No. 1624
+                </p>
               </div>
             </div>
-            {/* ... Form Input ... */}
-            <input
-              type="text"
-              value={suratInput}
-              onChange={(e) => setSuratInput(e.target.value)}
-              placeholder="No. Surat..."
-              className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pln-primary outline-none my-4"
-              autoFocus
-            />
+
+            <div className="bg-gray-50 p-3 rounded-lg border border-gray-200 mb-4">
+              <p className="text-xs font-bold text-gray-500 uppercase">
+                Dokumen Diperlukan
+              </p>
+              <p className="font-bold text-gray-800 text-sm">
+                FORM {STATUS_OPTIONS.find((s) => s.step === pendingStep)?.code}
+              </p>
+              <p className="text-xs text-gray-600 mt-1 italic">
+                {
+                  STATUS_OPTIONS.find(
+                    (s) => s.step === pendingStep,
+                  )?.label.split(": ")[1]
+                }
+              </p>
+            </div>
+
+            <div className="space-y-2 mb-6">
+              <label className="text-sm font-bold text-gray-700">
+                Nomor Surat / Berita Acara{" "}
+                <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={suratInput}
+                onChange={(e) => setSuratInput(e.target.value)}
+                placeholder="No. Surat..."
+                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-pln-primary outline-none"
+                autoFocus
+              />
+            </div>
+
             <div className="flex gap-3 justify-end">
               <button
                 onClick={() => setStatusModalOpen(false)}
@@ -602,16 +713,16 @@ export default function TrackingPage() {
         </div>
       </div>
 
-      {/* CHART SECTION (Optimized for CLS) */}
+      {/* CHART SECTION */}
       {!selectedAsset && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-          <div className="lg:col-span-2 bg-white p-4 rounded-xl shadow-sm border border-gray-100 min-h-[300px] h-64 relative">
+          <div className="lg:col-span-2 bg-white p-4 rounded-xl shadow-sm border border-gray-100 h-64">
             <h3 className="font-bold text-gray-700 mb-2 text-sm">
               Distribusi Tahapan (AE 1-4)
             </h3>
             <DistributionChart data={chartData} />
           </div>
-          <div className="lg:col-span-1 bg-white p-4 rounded-xl shadow-sm border border-gray-100 min-h-[300px] h-64 relative">
+          <div className="lg:col-span-1 bg-white p-4 rounded-xl shadow-sm border border-gray-100 h-64">
             <h3 className="font-bold text-gray-700 mb-2 text-sm">
               Komposisi Aset
             </h3>
@@ -669,6 +780,7 @@ export default function TrackingPage() {
                 }}
                 className={`p-3 rounded-lg cursor-pointer border relative group flex gap-3 ${selectedAsset?.id === asset.id ? "bg-pln-primary/5 border-pln-primary/30" : "bg-white hover:bg-gray-50"}`}
               >
+                {/* CHECKLIST INDIVIDUAL */}
                 <div
                   className="flex items-center pt-1"
                   onClick={(e) => e.stopPropagation()}
@@ -724,6 +836,7 @@ export default function TrackingPage() {
                   </h3>
                   {isAdmin && !isEditing && (
                     <div className="flex gap-2">
+                      {/* TOMBOL PDF KEMBALI */}
                       <PDFDownloadLink
                         document={<AssetDocument data={selectedAsset} />}
                         fileName={`BA_${selectedAsset.no_aset}.pdf`}
@@ -733,14 +846,12 @@ export default function TrackingPage() {
                       </PDFDownloadLink>
                       <button
                         onClick={startEditing}
-                        aria-label="Edit Aset"
                         className="px-3 py-1.5 border rounded-lg text-gray-600 text-xs font-bold hover:bg-gray-50 flex gap-1"
                       >
                         <Edit size={14} /> Edit
                       </button>
                       <button
                         onClick={handleDelete}
-                        aria-label="Hapus Aset"
                         className="px-3 py-1.5 border border-red-200 rounded-lg text-red-600 text-xs font-bold hover:bg-red-50 flex gap-1"
                       >
                         <Trash2 size={14} /> Hapus
@@ -767,11 +878,11 @@ export default function TrackingPage() {
 
                 {isEditing ? (
                   <div className="grid grid-cols-2 gap-4 bg-yellow-50 p-4 rounded-lg border border-yellow-200">
-                    {/* ... Form Edit ... */}
                     <div className="col-span-2 text-xs font-bold text-yellow-700 uppercase">
                       Edit Data Teknis
                     </div>
-                    {/* Dropdown Kategori */}
+
+                    {/* DROPDOWN KATEGORI (DIGUNAKAN) */}
                     <div className="col-span-2">
                       <label className="text-xs font-semibold text-gray-500">
                         Jenis Aset
@@ -793,6 +904,7 @@ export default function TrackingPage() {
                         ))}
                       </select>
                     </div>
+
                     <input
                       type="text"
                       value={editForm.merk_type}
@@ -857,7 +969,7 @@ export default function TrackingPage() {
                               Update Tahapan
                             </h4>
                             <p className="text-[10px]">
-                              Wajib input No. Surat.
+                              Wajib input No. Surat untuk pindah.
                             </p>
                           </div>
                         </div>
@@ -950,22 +1062,21 @@ export default function TrackingPage() {
                 )}
               </div>
 
-              {/* GRID UNTUK FOTO & LOG HISTORY (AUDIT) */}
+              {/* GRID UNTUK FOTO & LOG HISTORY (AUDIT) - INI YANG KEMBALI */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start pb-6">
-                {/* KOLOM KIRI: FOTO (OPTIMIZED) */}
+                {/* KOLOM KIRI: FOTO */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex flex-col h-full">
                   <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2 border-b pb-2">
                     <ImageIcon size={18} /> Foto Fisik
                   </h3>
-                  <div className="flex items-center justify-center bg-gray-50 rounded-lg border min-h-[250px] relative group overflow-hidden h-64">
+                  <div className="flex items-center justify-center bg-gray-50 rounded-lg border min-h-[250px] relative group overflow-hidden">
                     {selectedAsset.foto_url ? (
                       <>
-                        <Image
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
                           src={selectedAsset.foto_url}
-                          alt={`Foto aset ${selectedAsset.jenis_aset}`}
-                          fill
-                          sizes="(max-width: 768px) 100vw, 50vw"
-                          className="object-contain cursor-pointer transition-transform duration-300 group-hover:scale-105"
+                          alt="Foto"
+                          className="max-h-[250px] object-contain cursor-pointer transition-transform duration-300 group-hover:scale-105"
                           onClick={() =>
                             setZoomedImage(selectedAsset.foto_url!)
                           }
@@ -1006,24 +1117,20 @@ export default function TrackingPage() {
         </div>
       </div>
 
-      {/* ZOOM IMAGE MODAL (OPTIMIZED) */}
       {zoomedImage && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-sm p-4 animate-in fade-in">
           <button
             onClick={() => setZoomedImage(null)}
-            aria-label="Tutup Foto"
             className="fixed top-6 right-6 z-[110] text-white/70 hover:text-white bg-white/10 p-2 rounded-full"
           >
             <X size={28} />
           </button>
-          <div className="relative w-full h-[85vh]">
-            <Image
-              src={zoomedImage}
-              alt="Foto Aset Diperbesar"
-              fill
-              className="object-contain"
-            />
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={zoomedImage}
+            alt="Zoomed"
+            className="max-w-full max-h-[85vh] object-contain rounded-md"
+          />
         </div>
       )}
     </div>
