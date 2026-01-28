@@ -40,7 +40,7 @@ export default function AuthPage() {
         toast.success("Login Berhasil! Mengalihkan...");
 
         router.refresh();
-        router.push("/dashboard/tracking");
+        router.push("/dashboard");
       } else {
         // --- 2. LOGIKA DAFTAR ---
         console.log("Mencoba daftar user:", email);
@@ -65,7 +65,7 @@ export default function AuthPage() {
           );
         } else {
           toast.success("Pendaftaran Berhasil! Anda sudah login.");
-          router.push("/dashboard/tracking");
+          router.push("/dashboard");
         }
       }
     } catch (error) {

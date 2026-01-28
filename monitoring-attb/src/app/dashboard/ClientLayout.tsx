@@ -1,4 +1,3 @@
-// File: src/app/dashboard/ClientLayout.tsx
 "use client";
 
 import Link from "next/link";
@@ -6,7 +5,8 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   FilePlus,
-  PackageSearch,
+  Activity, // Icon untuk Progress Aset
+  TableProperties, // Icon untuk Monitoring Data
   LogOut,
   Menu,
   BookOpen,
@@ -14,11 +14,9 @@ import {
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { supabase } from "../../lib/supabaseClient"; // Pastikan path import ini benar sesuai struktur folder Anda
-import { toast } from "react-hot-toast";
+import { supabase } from "../../lib/supabaseClient";
+import { toast, Toaster } from "react-hot-toast"; // <--- TAMBAHKAN TOASTER DISINI
 import Image from "next/image";
-
-// Perhatikan: Metadata DIHAPUS dari sini
 
 export default function ClientLayout({
   children,
@@ -27,7 +25,6 @@ export default function ClientLayout({
 }) {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
@@ -62,7 +59,8 @@ export default function ClientLayout({
       if (user) {
         const adminCheck =
           user.email?.includes("admin") || user.user_metadata?.role === "admin";
-        setIsAdmin(adminCheck);
+        // Admin status stored but not used - can be extended for future use
+        console.log("Admin status:", adminCheck);
       }
     };
     checkUser();
@@ -80,6 +78,24 @@ export default function ClientLayout({
 
   return (
     <div className="flex min-h-screen bg-gray-50 relative">
+      {/* --- KOMPONEN TOASTER (WAJIB ADA AGAR NOTIF MUNCUL) --- */}
+      <Toaster
+        position="top-center"
+        reverseOrder={false}
+        toastOptions={{
+          className: "",
+          style: {
+            border: "1px solid #E0E0E0",
+            padding: "16px",
+            color: "#333",
+            background: "#fff",
+            borderRadius: "12px",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+            zIndex: 99999, // Pastikan di atas Modal (z-50)
+          },
+        }}
+      />
+
       {/* --- OVERLAY GELAP --- */}
       {isMobile && isSidebarOpen && (
         <div
@@ -127,19 +143,28 @@ export default function ClientLayout({
         </div>
 
         {/* MENU ITEMS */}
-        <div className="flex-1 py-6 px-3 space-y-2 overflow-y-auto">
+        <div className="flex-1 py-6 px-3 space-y-2 overflow-y-auto custom-scrollbar">
           <SidebarItem
             href="/dashboard"
             icon={<LayoutDashboard size={20} />}
             label="Dashboard"
             isOpen={isSidebarOpen}
           />
+
           <SidebarItem
-            href="/dashboard/tracking"
-            icon={<PackageSearch size={20} />}
-            label="Monitoring Aset"
+            href="/dashboard/progress"
+            icon={<Activity size={20} />}
+            label="Progress Aset"
             isOpen={isSidebarOpen}
           />
+
+          <SidebarItem
+            href="/dashboard/monitoring"
+            icon={<TableProperties size={20} />}
+            label="Monitoring Data"
+            isOpen={isSidebarOpen}
+          />
+
           <SidebarItem
             href="/dashboard/help"
             icon={<BookOpen size={20} />}
@@ -147,23 +172,22 @@ export default function ClientLayout({
             isOpen={isSidebarOpen}
           />
 
-          {isAdmin && (
-            <div className="pt-4 pb-2">
-              <p
-                className={`text-xs text-pln-accent/70 font-semibold px-4 mb-2 uppercase ${
-                  !isSidebarOpen && "hidden"
-                }`}
-              >
-                Admin Zone
-              </p>
-              <SidebarItem
-                href="/dashboard/input"
-                icon={<FilePlus size={20} />}
-                label="Input Barang"
-                isOpen={isSidebarOpen}
-              />
-            </div>
-          )}
+          {/* AREA KHUSUS ADMIN */}
+          <div className="pt-4 pb-2 border-t border-white/10 mt-4">
+            <p
+              className={`text-xs text-pln-accent/70 font-semibold px-4 mb-2 uppercase ${
+                !isSidebarOpen && "hidden"
+              }`}
+            >
+              Menu Input
+            </p>
+            <SidebarItem
+              href="/dashboard/input"
+              icon={<FilePlus size={20} />}
+              label="Input Usulan"
+              isOpen={isSidebarOpen}
+            />
+          </div>
         </div>
 
         {/* FOOTER */}
@@ -218,7 +242,7 @@ export default function ClientLayout({
   );
 }
 
-// Helper Component tetap di sini karena mengandung hooks (usePathname)
+// Helper Component Sidebar Item
 function SidebarItem({
   href,
   icon,
@@ -231,7 +255,8 @@ function SidebarItem({
   isOpen: boolean;
 }) {
   const pathname = usePathname();
-  const isActive = pathname === href;
+  const isActive =
+    pathname === href || (href !== "/dashboard" && pathname.startsWith(href));
 
   return (
     <Link

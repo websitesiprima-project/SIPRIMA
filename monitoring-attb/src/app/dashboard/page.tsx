@@ -13,7 +13,7 @@ import Link from "next/link";
 import { supabase } from "../../lib/supabaseClient";
 import dynamic from "next/dynamic";
 
-// --- IMPORT GRAFIK DINAMIS (Lazy Load) ---
+// --- IMPORT GRAFIK DINAMIS ---
 const DistributionChart = dynamic(
   () =>
     import("../../components/DashboardCharts").then(
@@ -44,7 +44,6 @@ const CompositionChart = dynamic(
   },
 );
 
-// --- DEFINISI TIPE DATA ---
 interface AssetData {
   id: string;
   jenis_aset: string;
@@ -55,11 +54,17 @@ interface AssetData {
   created_at: string;
 }
 
-interface ChartData {
+interface DistributionData {
   name: string;
-  count?: number;
-  value?: number;
+  count: number;
+  totalValue: number;
   [key: string]: string | number | undefined;
+}
+
+interface CompositionData {
+  name: string;
+  value: number;
+  [key: string]: string | number;
 }
 
 interface StatCardProps {
@@ -111,21 +116,19 @@ export default function DashboardPage() {
     dalamProses: 0,
   });
 
-  const [chartData, setChartData] = useState<ChartData[]>([]);
-  const [pieData, setPieData] = useState<ChartData[]>([]);
+  const [chartData, setChartData] = useState<DistributionData[]>([]);
+  const [pieData, setPieData] = useState<CompositionData[]>([]);
   const [recentAssets, setRecentAssets] = useState<AssetData[]>([]);
   const [userName, setUserName] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
-
     const init = async () => {
       setLoading(true);
       await Promise.all([fetchDashboardData(), getUserName()]);
       setLoading(false);
     };
     init();
-
     return () => controller.abort();
   }, []);
 
@@ -164,7 +167,7 @@ export default function DashboardPage() {
         0,
       );
 
-      const selesai = assets.filter((item) => item.current_step === 6).length;
+      const selesai = assets.filter((item) => item.current_step === 5).length;
       const dalamProses = totalAset - selesai;
 
       setStats({
@@ -176,21 +179,27 @@ export default function DashboardPage() {
       });
       setRecentAssets(assets.slice(0, 5));
 
-      // --- CHART DATA ---
-      const stepCounts = [0, 0, 0, 0, 0, 0];
+      // --- CHART DATA (ARRAY 5 TAHAP) ---
+      const stepCounts = [0, 0, 0, 0, 0];
+      const stepValues = [0, 0, 0, 0, 0];
+
       assets.forEach((item) => {
         const step = item.current_step || 1;
-        if (step >= 1 && step <= 6) stepCounts[step - 1]++;
+        if (step >= 1 && step <= 5) {
+          const index = step - 1;
+          stepCounts[index] += 1;
+
+          // PERUBAHAN: MENGGUNAKAN NILAI BUKU
+          stepValues[index] += item.nilai_buku || 0;
+        }
       });
 
-      // UPDATE: Menambahkan AE-3, AE-4, dan menghapus Verif
       setChartData([
-        { name: "AE-1", count: stepCounts[0] },
-        { name: "AE-2", count: stepCounts[1] },
-        { name: "AE-3", count: stepCounts[2] }, // Baru
-        { name: "AE-4", count: stepCounts[3] }, // Baru (Menggantikan Verif)
-        { name: "Setuju", count: stepCounts[4] },
-        { name: "Selesai", count: stepCounts[5] },
+        { name: "AE-1", count: stepCounts[0], totalValue: stepValues[0] },
+        { name: "AE-2", count: stepCounts[1], totalValue: stepValues[1] },
+        { name: "AE-3", count: stepCounts[2], totalValue: stepValues[2] },
+        { name: "AE-4", count: stepCounts[3], totalValue: stepValues[3] },
+        { name: "Selesai", count: stepCounts[4], totalValue: stepValues[4] },
       ]);
 
       const typeCounts: Record<string, number> = {};
@@ -226,10 +235,10 @@ export default function DashboardPage() {
         </div>
         <div className="text-left md:text-right bg-pln-gold/10 p-3 rounded-lg md:bg-transparent md:p-0">
           <p className="text-xs font-bold text-gray-500 uppercase">
-            Estimasi Recovery
+            Total Nilai Buku (Aset)
           </p>
-          <p className="text-xl md:text-2xl font-bold text-pln-gold">
-            {formatCurrencyShort(stats.totalTafsiran)}
+          <p className="text-xl md:text-2xl font-bold text-pln-primary">
+            {formatCurrencyShort(stats.totalNilaiBuku)}
           </p>
         </div>
       </div>
@@ -258,11 +267,11 @@ export default function DashboardPage() {
           subtext="Siap Hapus"
         />
         <StatCard
-          title="Nilai Buku"
-          value={formatCurrencyShort(stats.totalNilaiBuku)}
-          icon={<Wallet size={20} className="text-white" />}
-          color="bg-blue-800"
-          subtext="Total SAP"
+          title="Estimasi Recovery"
+          value={formatCurrencyShort(stats.totalTafsiran)}
+          icon={<TrendingUp size={20} className="text-white" />}
+          color="bg-pln-gold"
+          subtext="Potensi Pendapatan"
         />
       </div>
 
@@ -271,8 +280,8 @@ export default function DashboardPage() {
         {/* BAR CHART */}
         <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-gray-100 min-h-[300px]">
           <h3 className="font-bold text-gray-800 mb-6 flex items-center gap-2">
-            <TrendingUp size={18} className="text-pln-primary" /> Distribusi
-            Tahapan
+            <Wallet size={18} className="text-pln-primary" /> Distribusi Tahapan
+            & Nilai Buku
           </h3>
           <div className="h-64 w-full">
             <DistributionChart data={chartData} />
@@ -288,13 +297,13 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* RECENT ACTIVITY & BUTTON */}
+      {/* RECENT ACTIVITY */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
             <h3 className="font-bold text-gray-800 text-sm">Aset Terbaru</h3>
             <Link
-              href="/dashboard/tracking"
+              href="/dashboard/progress"
               className="text-xs text-pln-accent hover:underline flex items-center gap-1 font-medium"
             >
               Lihat Semua <ArrowRight size={12} />
@@ -308,9 +317,13 @@ export default function DashboardPage() {
               >
                 <div className="flex items-center gap-3">
                   <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-[10px] ${asset.current_step === 6 ? "bg-green-100 text-green-600" : "bg-blue-50 text-blue-600"}`}
+                    className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-[10px] ${
+                      asset.current_step === 5
+                        ? "bg-green-100 text-green-600"
+                        : "bg-blue-50 text-blue-600"
+                    }`}
                   >
-                    {asset.current_step === 6 ? "OK" : `T${asset.current_step}`}
+                    {asset.current_step === 5 ? "OK" : `T${asset.current_step}`}
                   </div>
                   <div>
                     <p className="font-bold text-sm text-gray-800 line-clamp-1">
@@ -323,7 +336,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="text-right">
                   <p className="font-bold text-xs text-gray-700">
-                    {formatCurrencyShort(asset.harga_tafsiran || 0)}
+                    {formatCurrencyShort(asset.nilai_buku || 0)}
                   </p>
                   <p className="text-[10px] text-gray-400">
                     {new Date(asset.created_at).toLocaleDateString("id-ID")}

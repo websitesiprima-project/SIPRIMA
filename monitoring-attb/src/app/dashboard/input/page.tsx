@@ -2,12 +2,19 @@
 
 import { useState, useEffect } from "react";
 import { supabase } from "../../../lib/supabaseClient";
-import { Save, Calculator, FileText, ArrowLeft } from "lucide-react";
+import {
+  Save,
+  Calculator,
+  FileText,
+  ArrowLeft,
+  FileSpreadsheet,
+  Loader2,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "react-hot-toast";
 import Link from "next/link";
+import ExcelJS from "exceljs";
 
-// --- DATA KATEGORI ---
 const assetCategories = [
   { label: "Trafo Tenaga (Power Transformer)", value: "Trafo Tenaga" },
   { label: "PMT (Pemutus Tenaga / Circuit Breaker)", value: "PMT" },
@@ -35,13 +42,14 @@ const parseNumber = (str: string) =>
 export default function InputAssetPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [verifying, setVerifying] = useState(true);
 
-  // --- STATE FORM (Termasuk no_surat_ae1) ---
+  // Form Manual State
   const [formData, setFormData] = useState({
     no_aset: "",
-    no_surat_ae1: "", // WAJIB UNTUK FORM AE-1
+    no_surat_ae1: "",
     jenis_aset: assetCategories[0].value,
     merk_type: "",
     spesifikasi: "",
@@ -57,54 +65,35 @@ export default function InputAssetPage() {
     lokasi: "",
     keterangan: "",
   });
-
   const [manualJenis, setManualJenis] = useState("");
 
-  // --- PROTEKSI HALAMAN ---
   useEffect(() => {
     const checkAccess = async () => {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (!user) {
-        router.replace("/");
-      } else {
-        setVerifying(false);
-      }
+      if (!user) router.replace("/");
+      else setVerifying(false);
     };
     checkAccess();
   }, [router]);
 
-  // --- AUTO-CALCULATE TAFSIRAN ---
   useEffect(() => {
     const tafsiran = formData.konversi_kg * formData.rupiah_per_kg;
     setFormData((prev) => ({ ...prev, harga_tafsiran: tafsiran }));
   }, [formData.konversi_kg, formData.rupiah_per_kg]);
 
-  // --- HANDLE CHANGE ---
   const handleChange = (
     e: React.ChangeEvent<
       HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
     >,
   ) => {
     const { name, value } = e.target;
-
     if (name === "manual_jenis_aset") {
       setManualJenis(value);
       return;
     }
 
-    // Daftar field string (termasuk no_surat_ae1)
-    const stringFields = [
-      "no_aset",
-      "no_surat_ae1",
-      "merk_type",
-      "spesifikasi",
-      "satuan",
-      "lokasi",
-      "keterangan",
-      "jenis_aset",
-    ];
     const numberFields = ["jumlah", "umur_pakai", "tahun_perolehan"];
     const currencyFields = [
       "nilai_perolehan",
@@ -113,88 +102,188 @@ export default function InputAssetPage() {
       "konversi_kg",
     ];
 
-    if (stringFields.includes(name)) {
-      setFormData((prev) => ({ ...prev, [name]: value }));
-    } else if (numberFields.includes(name)) {
+    if (numberFields.includes(name)) {
       setFormData((prev) => ({ ...prev, [name]: parseInt(value) || 0 }));
     } else if (currencyFields.includes(name)) {
       setFormData((prev) => ({ ...prev, [name]: parseNumber(value) }));
     } else {
-      setFormData((prev) => ({ ...prev, [name]: parseFloat(value) || 0 }));
+      setFormData((prev) => ({ ...prev, [name]: value }));
     }
   };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      setImageFile(e.target.files[0]);
+    if (e.target.files && e.target.files[0]) setImageFile(e.target.files[0]);
+  };
+
+  // --- IMPORT EXCEL (UPDATED MAPPING) ---
+  const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || !e.target.files[0]) return;
+    setImporting(true);
+
+    try {
+      const file = e.target.files[0];
+      const buffer = await file.arrayBuffer();
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer);
+      const worksheet = workbook.getWorksheet(1);
+      if (!worksheet) throw new Error("Sheet tidak ditemukan.");
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("User tidak ditemukan.");
+
+      const { data: existingAssets } = await supabase
+        .from("attb_assets")
+        .select("no_aset");
+      const existingNos = new Set(existingAssets?.map((a) => a.no_aset));
+
+      interface AssetInsert {
+        no_aset: string;
+        jenis_aset: string;
+        lokasi: string;
+        merk_type: string;
+        spesifikasi: string;
+        jumlah: number;
+        satuan: string;
+        tahun_perolehan: number;
+        nilai_perolehan: number;
+        nilai_buku: number;
+        no_surat_ae1: string;
+        no_surat_ae2: string;
+        no_surat_ae3: string;
+        no_surat_ae4: string;
+        konversi_kg: number;
+        rupiah_per_kg: number;
+        harga_tafsiran: number;
+        status: string;
+        current_step: number;
+        foto_url: null;
+        input_by: string;
+      }
+      const newAssetsToInsert: AssetInsert[] = [];
+
+      // Loop Baris
+      worksheet.eachRow((row, rowNumber) => {
+        // REQUEST: Mulai dari Baris 26
+        if (rowNumber < 26) return;
+
+        // --- MAPPING KOLOM (SESUAI REQUEST) ---
+        // A (1) = No Aset (SAP)
+        // G (7) = Lokasi (REQUEST BARU)
+        // F (6) = Jenis Aset (Description)
+        // H (8) = Merk/Type
+        // I (9) = Spesifikasi (Main No Text)
+        // M (13) = Nilai Buku (Sesuai request sebelumnya)
+        // P (16) = AE.1 (No Surat)
+
+        const noAsetRaw = row.getCell(1).text
+          ? row.getCell(1).text.toString().trim()
+          : "";
+
+        if (!noAsetRaw || existingNos.has(noAsetRaw)) {
+          return;
+        }
+
+        const beratEstimasi = 0;
+
+        newAssetsToInsert.push({
+          no_aset: noAsetRaw,
+          jenis_aset: row.getCell(6).text || "Aset Tetap",
+          lokasi: row.getCell(7).text || "-", // UPDATED: Kolom G
+          merk_type: row.getCell(8).text || "-",
+          spesifikasi: row.getCell(9).text || "-",
+          jumlah: parseInt(row.getCell(10).text) || 1,
+          satuan: row.getCell(11).text || "Unit",
+
+          tahun_perolehan: 2010,
+          nilai_perolehan: 0,
+          nilai_buku: parseFloat(row.getCell(13).text) || 0, // Kolom M
+
+          // Surat-surat
+          no_surat_ae1: row.getCell(16).text || "",
+          no_surat_ae2: row.getCell(17).text || "",
+          no_surat_ae3: row.getCell(18).text || "",
+          no_surat_ae4: row.getCell(19).text || "",
+
+          konversi_kg: beratEstimasi,
+          rupiah_per_kg: 4300,
+          harga_tafsiran: beratEstimasi * 4300,
+          status: "Tahap 1: BA Hasil Penelitian (AE-1)",
+          current_step: 1,
+          foto_url: null,
+          input_by: user.id,
+        });
+      });
+
+      if (newAssetsToInsert.length === 0) {
+        toast("Tidak ada data baru. Cek apakah data dimulai dari baris 26?", {
+          icon: "ℹ️",
+        });
+        return;
+      }
+
+      const { error } = await supabase
+        .from("attb_assets")
+        .insert(newAssetsToInsert);
+      if (error) throw error;
+
+      toast.success(`Berhasil Import ${newAssetsToInsert.length} Aset Baru!`);
+      router.push("/dashboard/progress");
+    } catch (err) {
+      console.error(err);
+      toast.error("Gagal Import Excel.");
+    } finally {
+      setImporting(false);
+      e.target.value = "";
     }
   };
 
-  // --- SUBMIT (CREATE AE-1) ---
+  // --- SUBMIT MANUAL ---
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
     if (!formData.no_surat_ae1.trim()) {
       toast.error("Nomor Surat AE-1 Wajib Diisi!");
       return;
     }
-
     setLoading(true);
     try {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (!user?.id) throw new Error("Sesi login berakhir. Refresh halaman.");
+      if (!user?.id) throw new Error("Sesi habis.");
 
-      // 1. Upload Foto
       let foto_url = "";
       if (imageFile) {
         const fileName = `${Date.now()}-${imageFile.name.replace(/\s+/g, "-")}`;
         const { error } = await supabase.storage
           .from("attb-photos")
           .upload(fileName, imageFile);
-        if (error) throw new Error("Gagal upload foto: " + error.message);
+        if (error) throw error;
         const { data } = supabase.storage
           .from("attb-photos")
           .getPublicUrl(fileName);
         foto_url = data.publicUrl;
       }
 
-      // 2. Gabung Spesifikasi
-      const combinedSpesifikasi = manualJenis
-        ? `[KODE: ${manualJenis}] \n${formData.spesifikasi}`
-        : formData.spesifikasi;
-
-      // 3. Payload (Sesuai Struktur Database Baru)
       const payload = {
         ...formData,
-        spesifikasi: combinedSpesifikasi,
+        spesifikasi: manualJenis
+          ? `[KODE: ${manualJenis}] \n${formData.spesifikasi}`
+          : formData.spesifikasi,
         foto_url: foto_url || null,
-
-        // --- DATA PENTING UNTUK ALUR BARU ---
-        status: "Tahap 1: BA Hasil Penelitian (AE-1)", // Label Status
-        current_step: 1, // Step 1
-        // no_surat_ae1 sudah ada di dalam formData (spread operator di atas)
-
+        status: "Tahap 1: BA Hasil Penelitian (AE-1)",
+        current_step: 1,
         input_by: user.id,
       };
 
-      console.log("Sending Payload:", payload);
+      const { error } = await supabase.from("attb_assets").insert([payload]);
+      if (error) throw error;
 
-      // --- PERUBAHAN UTAMA: INSERT LANGSUNG KE SUPABASE ---
-      const { error: insertError } = await supabase
-        .from("attb_assets")
-        .insert([payload]);
-
-      if (insertError) {
-        throw new Error(insertError.message);
-      }
-
-      toast.success("Berhasil! Dokumen AE-1 Tersimpan.");
-      router.push("/dashboard/tracking");
+      toast.success("Input Manual Berhasil!");
+      router.push("/dashboard/progress");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Error Unknown";
-      toast.error(message);
+      toast.error((error as Error).message);
     } finally {
       setLoading(false);
     }
@@ -216,37 +305,53 @@ export default function InputAssetPage() {
         <ArrowLeft size={16} /> Kembali ke Dashboard
       </Link>
 
-      <h1 className="text-2xl font-bold text-pln-primary mb-6">
-        Input Usulan ATTB (Form AE-1)
-      </h1>
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+        <h1 className="text-2xl font-bold text-pln-primary">
+          Input Usulan ATTB
+        </h1>
+
+        {/* TOMBOL IMPORT EXCEL */}
+        <div className="relative">
+          <input
+            type="file"
+            accept=".xlsx, .xls"
+            onChange={handleExcelUpload}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+            disabled={importing}
+          />
+          <button
+            className={`flex items-center gap-2 px-6 py-3 rounded-xl font-bold shadow-lg text-white transition-all ${importing ? "bg-gray-400" : "bg-green-600 hover:bg-green-700"}`}
+          >
+            {importing ? (
+              <Loader2 size={20} className="animate-spin" />
+            ) : (
+              <FileSpreadsheet size={20} />
+            )}
+            {importing ? "Mengimport..." : "Import Excel"}
+          </button>
+        </div>
+      </div>
 
       <form onSubmit={handleSubmit} className="space-y-8">
-        {/* KARTU 1: ADMINISTRASI (FORM AE-1) */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 border-l-4 border-l-pln-primary">
           <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2 flex items-center gap-2">
             <FileText size={20} className="text-pln-primary" /> 1. Dokumen
             Berita Acara (AE-1)
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* NO SURAT AE-1 (WAJIB) */}
             <div className="space-y-2">
               <label className="text-sm font-bold text-gray-700 uppercase">
-                No. Surat AE-1 (BA Hasil Penelitian){" "}
-                <span className="text-red-500">*</span>
+                No. Surat AE-1 <span className="text-red-500">*</span>
               </label>
               <input
                 required
                 name="no_surat_ae1"
                 type="text"
                 onChange={handleChange}
-                className="w-full p-3 bg-blue-50 border border-blue-200 rounded-lg focus:ring-2 focus:ring-pln-primary outline-none font-medium text-gray-800"
+                className="w-full p-3 bg-blue-50 border border-blue-200 rounded-lg"
                 placeholder="Contoh: 001/BA-HP/2026"
               />
-              <p className="text-[10px] text-gray-500">
-                *Nomor Berita Acara Hasil Penelitian & Penarikan Aset
-              </p>
             </div>
-
             <div className="space-y-2">
               <label className="text-sm font-bold text-gray-700 uppercase">
                 No. Aset (SAP) <span className="text-red-500">*</span>
@@ -257,7 +362,6 @@ export default function InputAssetPage() {
                 type="text"
                 onChange={handleChange}
                 className="w-full p-3 bg-white border border-gray-300 rounded-lg"
-                placeholder="Contoh: 100029384"
               />
             </div>
           </div>
@@ -285,10 +389,9 @@ export default function InputAssetPage() {
                 ))}
               </select>
             </div>
-
             <div className="space-y-2">
               <label className="text-xs font-bold text-red-600 uppercase">
-                Kode Teknis / Manual (Opsional)
+                Kode Teknis (Opsional)
               </label>
               <input
                 name="manual_jenis_aset"
@@ -297,7 +400,6 @@ export default function InputAssetPage() {
                 className="w-full p-3 bg-white border border-red-200 rounded-lg"
               />
             </div>
-
             <div className="space-y-2 md:col-span-2">
               <label className="text-xs font-bold text-gray-500 uppercase">
                 Merk / Type
@@ -310,7 +412,6 @@ export default function InputAssetPage() {
                 className="w-full p-3 bg-white border rounded-lg"
               />
             </div>
-
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-xs font-bold text-gray-500 uppercase">
@@ -340,7 +441,6 @@ export default function InputAssetPage() {
                 />
               </div>
             </div>
-
             <div className="md:col-span-2 space-y-2">
               <label className="text-xs font-bold text-gray-500 uppercase">
                 Spesifikasi Detail
@@ -408,9 +508,7 @@ export default function InputAssetPage() {
                 className="w-full p-3 bg-gray-50 border rounded-lg font-bold"
               />
             </div>
-
             <div className="md:col-span-4 my-2 border-t border-dashed border-gray-200"></div>
-
             <div className="space-y-2">
               <label className="text-xs font-bold text-blue-600 uppercase">
                 Berat (Kg)
@@ -447,7 +545,7 @@ export default function InputAssetPage() {
           </div>
         </div>
 
-        {/* KARTU 4: DOKUMENTASI */}
+        {/* KARTU 4: LOKASI */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <h2 className="text-lg font-bold text-gray-800 mb-4 border-b pb-2">
             4. Lokasi & Foto
@@ -492,13 +590,6 @@ export default function InputAssetPage() {
 
         <div className="flex justify-end gap-4">
           <button
-            type="button"
-            onClick={() => router.push("/dashboard/tracking")}
-            className="px-6 py-3 rounded-xl border font-bold"
-          >
-            Batal
-          </button>
-          <button
             type="submit"
             disabled={loading}
             className="bg-pln-primary text-white px-8 py-3 rounded-xl font-bold shadow-lg flex items-center gap-2 hover:bg-pln-primary/90 transition-colors"
@@ -507,7 +598,7 @@ export default function InputAssetPage() {
               "Menyimpan..."
             ) : (
               <>
-                <Save size={20} /> Simpan Data (AE-1)
+                <Save size={20} /> Simpan Data
               </>
             )}
           </button>

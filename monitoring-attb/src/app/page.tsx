@@ -8,18 +8,18 @@ import {
   BarChart3,
   Zap,
   ArrowLeft,
-} from "lucide-react"; // Added ArrowLeft
+} from "lucide-react";
 import { motion } from "framer-motion";
 
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-white flex flex-col font-sans text-gray-800 overflow-x-hidden">
       {/* --- NAVBAR --- */}
-      <nav className="w-full px-8 py-6 flex justify-between items-center max-w-7xl mx-auto">
-        {/* --- TOMBOL KEMBALI KE PORTAL (NEW) --- */}
+      <nav className="w-full px-4 md:px-8 py-6 flex justify-between items-center max-w-7xl mx-auto">
+        {/* KIRI: KEMBALI KE PORTAL & LOGO */}
         <div className="flex items-center gap-4">
           <a
-            href="https://pln-portal-mocha.vercel.app/" // Link ke PORTAL (Port 3000)
+            href="https://pln-portal-mocha.vercel.app/" // Link ke PORTAL UTAMA
             className="flex items-center gap-2 text-gray-500 hover:text-pln-primary font-medium text-sm transition-colors group"
           >
             <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center group-hover:bg-pln-primary/10 transition-colors">
@@ -34,11 +34,11 @@ export default function LandingPage() {
           {/* Divider Kecil */}
           <div className="h-6 w-px bg-gray-200 hidden md:block"></div>
 
-          {/* Logo Kecil (Geser sedikit ke kanan) */}
+          {/* Logo Kecil & Teks UPT */}
           <div className="flex items-center gap-2 opacity-80 hover:opacity-100 transition-opacity">
             <div className="w-8 h-8 relative">
               <Image
-                src="/logo.png"
+                src="/logo_1.png" // Pastikan nama file logo sesuai di folder public
                 alt="Logo Kecil"
                 fill
                 className="object-contain"
@@ -50,30 +50,30 @@ export default function LandingPage() {
           </div>
         </div>
 
-        {/* Tombol Login */}
+        {/* KANAN: TOMBOL LOGIN */}
         <Link
-          href="/auth"
+          href="/auth" // Mengarah ke halaman Login (src/app/auth/page.tsx)
           className="px-6 py-2.5 rounded-full border border-pln-primary text-pln-primary font-bold hover:bg-pln-primary hover:text-white transition-all text-sm"
         >
           Login Staff
         </Link>
       </nav>
 
-      {/* --- HERO SECTION (FOKUS LOGO BESAR) --- */}
+      {/* --- HERO SECTION --- */}
       <main className="flex-1 flex flex-col items-center justify-center text-center px-4 relative mt-10 mb-20">
-        {/* Background Hiasan (Blur) */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-cyan-100/50 rounded-full blur-3xl -z-10" />
+        {/* Background Glow Effect */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] md:w-[600px] h-[300px] md:h-[600px] bg-cyan-100/50 rounded-full blur-3xl -z-10" />
 
         <motion.div
           initial={{ opacity: 0, scale: 0.8 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.8, ease: "easeOut" }}
-          className="relative w-full max-w-3xl h-64 md:h-80 mb-8 flex items-center justify-center"
+          className="relative w-full max-w-xl h-48 md:h-80 mb-8 flex items-center justify-center"
         >
-          {/* --- LOGO UTAMA SANGAT BESAR --- */}
+          {/* LOGO BESAR DI TENGAH */}
           <Image
-            src="/Logo.png"
-            alt="ReValue Logo Besar"
+            src="/logo_1.png"
+            alt="Logo Besar"
             fill
             className="object-contain drop-shadow-2xl"
             priority
@@ -91,7 +91,7 @@ export default function LandingPage() {
               System
             </span>
           </h1>
-          <p className="text-gray-500 text-lg md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed">
+          <p className="text-gray-500 text-lg md:text-xl max-w-2xl mx-auto mb-10 leading-relaxed px-4">
             Sistem monitoring terintegrasi untuk mengelola Aset Tetap Tidak
             Beroperasi (ATTB). Ubah aset pasif menjadi nilai produktif bagi
             perusahaan.
