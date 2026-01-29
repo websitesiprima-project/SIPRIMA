@@ -80,7 +80,7 @@ def log_activity_bg(user_email: str, action: str, target: str):
     except Exception as e:
         print(f"❌ [Log Error]: {e}")
 
-def send_telegram_notif(message: str, specific_chat_id: str = None):
+def send_telegram_notif(message: str, specific_chat_id: Optional[str] = None):
     """Kirim pesan ke Telegram (Bisa Broadcast ke Grup Default atau Balas Chat Tertentu)"""
     target_chat_id = specific_chat_id or TELEGRAM_CHAT_ID
     
@@ -182,15 +182,17 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
             if text == "/info" or text == "/start":
                 print(f"📩 Menerima perintah '{text}' dari {sender}")
                 
-                # Kirim status "Sedang mengetik..." (Opsional, biar keren)
+                # Kirim status "Sedang mengetik..." (Opsional)
+                # Kita biarkan ini synchronous juga agar urut
                 requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendChatAction", 
                               json={"chat_id": chat_id, "action": "typing"})
                 
                 # Generate Laporan
                 report_msg = generate_upcoming_report_text()
                 
-                # Balas ke User/Grup yang meminta
-                background_tasks.add_task(send_telegram_notif, report_msg, chat_id)
+                # 🔥 PERBAIKAN: KIRIM LANGSUNG (Direct Call)
+                # Jangan pakai background_tasks di sini untuk Vercel Webhook
+                send_telegram_notif(report_msg, chat_id)
 
         return {"status": "ok"}
     except Exception as e:
@@ -201,7 +203,9 @@ async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
 def manual_check_upcoming(background_tasks: BackgroundTasks):
     """Endpoint manual via Browser"""
     msg = generate_upcoming_report_text()
-    background_tasks.add_task(send_telegram_notif, msg)
+    # Untuk manual trigger via browser, background task biasanya OK, 
+    # tapi agar aman di Vercel, kita direct call juga
+    send_telegram_notif(msg) 
     return {"status": "Sent", "preview": msg}
 
 @app.get("/api/analytics")
@@ -260,6 +264,7 @@ def create_letter(letter: LetterSchema, background_tasks: BackgroundTasks):
     if res.data:
         background_tasks.add_task(log_activity_bg, user, "CREATE", f"Tambah: {data['vendor']}")
         msg = f"🆕 *DATA BARU*\n🏢 {data['vendor']}\n📄 `{data['nomor_kontrak']}`"
+        # Untuk notifikasi create, background tasks biasanya OK karena user interaksi via frontend
         background_tasks.add_task(send_telegram_notif, msg)
     return res.data
 
@@ -295,11 +300,12 @@ def cron_auto_update_status(background_tasks: BackgroundTasks):
     for x in lst:
         if x.get('id'): supabase.table("letters").update({"status": "Expired"}).eq("id", x['id']).execute()
     
-    background_tasks.add_task(log_activity_bg, "System", "AUTO_UPDATE", f"Check done. {len(lst)} updated.")
-    
     # Kirim report ke Default Group (Hanya saat pagi hari via Cron)
-    if "Sisa:" in report: # Cek apakah ada isinya
-        background_tasks.add_task(send_telegram_notif, report)
+    # Cron Vercel punya timeout lebih panjang, jadi direct call lebih aman
+    if "Sisa:" in report: 
+        send_telegram_notif(report)
+        
+    background_tasks.add_task(log_activity_bg, "System", "AUTO_UPDATE", f"Check done. {len(lst)} updated.")
     
     return {"status": "success"}
 
